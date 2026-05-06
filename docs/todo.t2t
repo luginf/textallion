@@ -53,6 +53,8 @@
 - --Wrapping is not working on the Android browser (looks like fixed width)--
 - Slidy menu are too big
 
+- QR code generator (google api) is broken / deprecated
+
 
 
 == PDF (LaTeX and XeTeX) ==

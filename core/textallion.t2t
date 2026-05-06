@@ -5,10 +5,10 @@
 %% Tiny almost-Kiss Word Processor
 %% based on the txt2tags tool and wiki syntax
 %
-% by Eric Forgeot (c) 2008-2021
+% by Eric Forgeot (c) 2008-2026
 %
 % http://anamnese.online.fr/site2/textallion/docs/presentation.html
-% Complete source code: https://textallion.sourceforge.io/
+% Complete source code: https://github.com/farvardin/textallion/ / https://textallion.sourceforge.io/
 % License: http://en.wikipedia.org/wiki/BSD_licenses
 %
 % <!> NOTE: YOU SHOULDN'T NEED TO MODIFY THIS FILE
@@ -833,6 +833,25 @@
 
 % version sans align center postée plus haut car sinon ne s'affiche pas
 
+%%%% RTF
+
+%!postproc(rtf): '\*-\*-'               '\\bigskip'
+%!postproc(rtf): 'CONVERTaldinea'       '\\parag'
+%!postproc(rtf): 'CONVERTaldineb'       '\\aldineb'
+%!postproc(rtf): 'CONVERTtroisetoiles'  '\\troisetoiles'
+%!postproc(rtf): 'CONVERTsoleil'        '\\soleil'
+%!postproc(rtf): 'CONVERTlunep'         '\\lunep'
+%!postproc(rtf): 'CONVERTluned'         '\\luned'
+%!postproc(rtf): 'CONVERTlunef'         '\\lunefull'
+
+%!postproc(rtf): 'CONVERTguillemetBEGIN' '\\og{}'
+%!postproc(rtf): 'CONVERTguillemetEND'   '\\fg{}'
+
+
+%!postproc(rtf): 'CONVERTitalicBEGIN'  '{\\i{'
+%!postproc(rtf): 'CONVERTitalicEND'    '}}'
+%!postproc(rtf): 'CONVERTboldBEGIN'    '{\\b{'
+%!postproc(rtf): 'CONVERTboldEND'      '\}}'
 
 
 %% Correct display.
@@ -849,6 +868,7 @@
 %!preproc: '--------(-+)---------' 'SIMPLELINE'
 %!preproc(tex): ' --- ' ' QUADRATINDASH '
 %!preproc(xhtml): '---' 'QUADRATINDASH'
+%!preproc(rtf): '---' 'QUADRATINDASH'
 
 %!postproc(xhtml): 'QUADRATINDASH' '&mdash;'
 
@@ -859,7 +879,9 @@
 %!postproc(xhtml): '<!—' '<!--'
 %!postproc(xhtml): '—>' '-->'
 %!postproc(tex): 'QUADRATINDASH' '---'
+%!postproc(rtf): 'QUADRATINDASH' '\line {\u8212\'97 }'
 
+%%  https://latex2rtf.sourceforge.net/rtfspec_62.html
 
 %% TOC in LaTeX
 % remove the stars (*) in your txt2tags file:

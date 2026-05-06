@@ -46,8 +46,8 @@ All personal artwork and documentation, if applicable, are licensed under the [C
 
 You can contact me about Textallion:
 - on the discussion-list: http://groups.google.com/group/textallion-discuss
-- on the bug-tracker: https://sourceforge.net/p/textallion/tickets/
-- using this form there: http://anamnese.online.fr/site2/index.php?id=contact
+- on the bug-tracker: https://github.com/farvardin/textallion/issues
+% - using this form there: http://anamnese.online.fr/site2/index.php?id=contact
 
 
 --------------------
@@ -66,7 +66,7 @@ Credit is due to:
 - "Tout ce que vous avez toujours voulu savoir sur LaTeX sans jamais oser le demander" par Vincent Lozano (édition framabook / In Libro Veritas)
 - ''http://www.grappa.univ-lille3.fr/FAQ-LaTeX/6.7.html''
 - Html footnote effect taken from http://andreas.web-graphics.com/footnotes
-- Qr-Code generator from http://blog.strangeblackhole.com/Un-QR-Code-sur-mon-blog-avec.html
+% - Qr-Code generator from http://blog.strangeblackhole.com/Un-QR-Code-sur-mon-blog-avec.html
 - [Inno Setup http://www.jrsoftware.org/isinfo.php] for the windows installer
 - http://www.auntiepixelante.com/twine/ for the help with the twine syntax
 - http://www.mcdemarco.net/ for the twee patch
