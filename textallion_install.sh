@@ -18,22 +18,19 @@ pause(){
 }
 
 install(){
-	cp -fr ../textallion/* ${INSTALLPATH}
+	SRCPATH="$(cd "$(dirname "$0")" && pwd)"
+	cp -fr "${SRCPATH}/"* ${INSTALLPATH}
 	chmod -R 755 ${INSTALLPATH}/
-	chmod +x ${INSTALLPATH}/contrib/txt2tags/txt2tags
-	#echo "/usr/bin/env sh ${INSTALLPATH}/core/textallion.sh" > /usr/bin/textallion
+	chmod +x ${INSTALLPATH}/contrib/txt2tags/txt2tags3
 	rm -fr /usr/bin/textallion
 	ln -s ${INSTALLPATH}/core/textallion.sh /usr/bin/textallion
-	rm -fr ${INSTALLPATH}/.hg/
-	mkdir -p ${INSTALLPATH}/.hg/
-	cp -fr ../textallion/contrib/others/hgrc ${INSTALLPATH}/.hg/
 	chmod +x /usr/bin/textallion
 	cp ${INSTALLPATH}/contrib/others/textallion.desktop /usr/share/applications/
 	cp ${INSTALLPATH}/media/logo_textallion.png /usr/share/icons/textallion.png
 	sed -i -e "s|TEXTALLIONPATH=/usr/share/textallion/|TEXTALLIONPATH=${INSTALLPATH}|g" ${INSTALLPATH}/core/textallion.sh
-	if test core/textallion.t2t -nt ${INSTALLPATH}/core/textallion.t2t; then
-    	printf "\n** Error **\n"
-    else 
+	if test "${SRCPATH}/core/textallion.t2t" -nt "${INSTALLPATH}/core/textallion.t2t"; then
+    	printf "\n** Error: source is newer than installed file — copy may have failed **\n"
+    else
     	printf "\nThe installation or update was done, Textallion was installed into ${INSTALLPATH}\n"
 	fi
 
@@ -44,14 +41,14 @@ PWD="`pwd`"
 PWD2="${PWD##*/}"
 echo ${PWD2}
 	if [ ! -e core ]; then
-		echo "It seems you're not running this installation script from the textallion folder. We'll try to download it from the sourceforge repo, is it OK (you'll need to have mercurial / hg installed on your system)? (Y/n)"
+		echo "It seems you're not running this installation script from the textallion folder. We'll try to clone it from GitHub (git required). Is it OK? (Y/n)"
 		read updateit
 			case $updateit in
 					"n"|"N"|"no"|"NO"|"non")
 						echo "We'll abort now"
 						;;
 					"y"|"Y"|"yes"|*)
-					hg clone http://hg.code.sf.net/p/textallion/code textallion-code
+					git clone https://github.com/farvardin/textallion textallion
 					cd textallion
 					chmod +x textallion_install.sh
 					sudo ./textallion_install.sh

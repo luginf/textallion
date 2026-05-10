@@ -3,7 +3,7 @@
 # Generates lots of errors, will be made in a makefile maybe in the future...
 
 export TEXTALLIONFOLDER="../"
-export TXT2TAGS="python2 ../contrib/txt2tags/txt2tags"
+export TXT2TAGS="python3 ../contrib/txt2tags/txt2tags3"
 
 rm -fr /tmp/textallion
 mkdir -p /tmp/textallion/docs
@@ -17,7 +17,7 @@ make epub
 make pdf
 make html
 make slidy
-ebook-meta the_blue_death.epub --title "Textallion - Documentation" --authors "Eric Forgeot" --language "fr" --tags "textallion" 
+ebook-meta ${TEXTALLIONDOC}.epub --title "Textallion - Documentation" --authors "Eric Forgeot" --language "fr" --tags "textallion"
 export TEXTALLIONDOC=textallion_cyoa_fr
 make pdf
 make html
@@ -33,7 +33,7 @@ make epub
 make pdf
 make html
 make slidy
-ebook-meta the_blue_death.epub --title "Textallion - Documentation" --authors "Eric Forgeot" --language "en" --tags "textallion" 
+ebook-meta ${TEXTALLIONDOC}.epub --title "Textallion - Documentation" --authors "Eric Forgeot" --language "en" --tags "textallion"
 export TEXTALLIONDOC=textallion_cyoa_en
 make pdf
 make html
@@ -74,7 +74,7 @@ make pdf
 make html
 make slidy
 make clean
-ebook-meta the_blue_death.epub --title "Textallion - Samples" --authors "Eric Forgeot" --language "en" --tags "textallion" 
+ebook-meta ${TEXTALLIONDOC}.epub --title "Textallion - Samples" --authors "Eric Forgeot" --language "en" --tags "textallion"
 mv *.html /tmp/textallion/samples
 mv *.pdf /tmp/textallion/samples
 mv *.epub /tmp/textallion/samples
@@ -101,7 +101,7 @@ make cyoa-epub
 make cyoa-pdf
 make cyoa-html
 make clean
-ebook-meta the_blue_death.epub --title "La Mort Bleue" --authors "Otto Grimwald" --language "fr" --tags "cyoa, ldvelh" 
+ebook-meta ${TEXTALLIONDOC}.epub --title "La Mort Bleue" --authors "Otto Grimwald" --language "fr" --tags "cyoa, ldvelh"
 mv *.html /tmp/textallion/samples_cyoa
 mv *.pdf /tmp/textallion/samples_cyoa
 mv *.epub /tmp/textallion/samples_cyoa

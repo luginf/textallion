@@ -22,7 +22,7 @@ fi
 		for A in *.gif ; do echo [[tb/tb_$A] $A] >> vignettes_doc.t2t ; done
 	fi
 	videofiles=$(ls *.m4v 2> /dev/null | wc -l)
-	if [ "$jvideofiles" != "0" ]; then
+	if [ "$videofiles" != "0" ]; then
 		for C in *m4v ; do ffmpeg -i $C -an -ss 00:00:08 -an -r 1 -vframes 1 -y -s qqvga -f mjpeg tb/tb_$C.jpg ; convert tb/tb_$C.jpg -pointsize 12 -fill white  -undercolor '#00000080'  -gravity South  -annotate +0+5 ' VIDEO ' tb/tb_$C.jpg ; done
 		for C in *m4v ; do echo [[tb/tb_$C.jpg] $C] >> vignettes_doc.t2t ; done
 	fi

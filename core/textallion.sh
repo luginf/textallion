@@ -178,8 +178,7 @@ if [ ! -d $TEXTALLIONPATH ]; then
 	installtextallion
 else
 	cd $TEXTALLIONPATH
-	$SUDO hg pull
-	$SUDO hg update  -C
+	$SUDO git pull
 fi
 }
 
@@ -189,17 +188,14 @@ if [ -e $TEXTALLIONPATH ]; then
 	pause
 	updatetextallion
 else
-	echo "Textallion will be installed into $TEXTALLIONPATH: this folder will be created, then it will try to be synchronized with the development version, using Mercurial. Is it ok? (Y/n)"
+	echo "Textallion will be installed into $TEXTALLIONPATH: this folder will be created, then it will try to be cloned from the GitHub repository. Is it ok? (Y/n)"
 		read choice
 			case $choice in
 					"n"|"N"|"no"|"NO"|"non")
 						echo "Nothing was changed in your configuration"
 						;;
 					"y"|"Y"|"yes"|*)
-					$SUDO mkdir -p $TEXTALLIONPATH/.hg
-					echo "[paths]" | $SUDO tee -a $TEXTALLIONPATH/.hg/hgrc
-					echo "default = http://hg.code.sf.net/p/textallion/code textallion-code" | sudo tee -a $TEXTALLIONPATH/.hg/hgrc
-					updatetextallion
+					$SUDO git clone https://github.com/farvardin/textallion $TEXTALLIONPATH
 						;;
 			esac
 fi
