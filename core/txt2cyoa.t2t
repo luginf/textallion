@@ -118,8 +118,8 @@
 %!preproc: '^== (\d+) =='  '==\1==[\1]'   
 
 
-% create named paragraphs as well (also for twine)
-%!preproc: '^== ([^ ].*?) =='  '==\1==[\1]'
+% create named paragraphs as well (also for twine) (<!> some problems)
+%--!preproc: '^== ([^ ].*?) =='  '==\1==[\1]'
 
  
 

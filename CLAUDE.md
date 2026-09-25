@@ -50,7 +50,7 @@ media/              Logos et images d'exemple
 1. Le fichier source `DOCUMENT.t2t` contient le texte en syntaxe txt2tags + directives `%!includeconf` pointant vers `core/textallion.t2t` (et optionnellement `core/txt2cyoa.t2t` pour les CYOA).
 2. `make html/pdf/epub` appelle `txt2tags3` avec le gabarit approprié depuis `templates/`.
 3. Pour le PDF : txt2tags génère un `.tex`, puis `pdflatex` (ou `xelatex`) compile en PDF (3 passes pour TOC + index).
-4. Pour l'EPUB : txt2tags génère un `.html` intermédiaire, `ebook-convert` (Calibre) produit l'EPUB.
+4. Pour l'EPUB : txt2tags génère un `.html` intermédiaire (gabarit `templates/epub.html`), nettoyé par quelques `sed`, puis `core/epub-generator.sh` (s'appuie sur `pandoc`) produit l'EPUB directement — plus de dépendance à Calibre. Ce script est une copie de ~/src/epub-generator/epub-generator.sh, vendue dans `core/` comme `lines.py`/`vignettes.sh`.
 
 **Commande txt2tags typique :**
 ```sh
@@ -105,7 +105,7 @@ Les chapitres sont délimités par `== numéro ==` et les choix par des listes �
 
 - **Python 3** : pour txt2tags3
 - **LaTeX** (pdflatex / xelatex) : génération PDF
-- **Calibre** (`ebook-convert`, `ebook-meta`) : génération EPUB
+- **pandoc**, via `core/epub-generator.sh` : génération EPUB
 - **ImageMagick** (`convert`) : génération de couvertures depuis SVG
 - **`meld`** (optionnel) : cible `configuration-update`
 - **`graphviz`** (optionnel) : cible `cyoa-graph`

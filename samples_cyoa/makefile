@@ -471,19 +471,19 @@ cyoa-epub:
 	$(TXT2TAGS) -T $(TEXTALLIONFOLDER)/templates/epub.html --config-file $(TEXTALLIONFOLDER)/core/txt2cyoa.t2t -t xhtml --no-style --no-toc --outfile $(DOCUMENT).html $(DOCUMENT).t2t
 	cat $(DOCUMENT).html | sed -e "s/<audio\(.*\)audio>//g" > $(DOCUMENT)2.html
 	mv $(DOCUMENT)2.html $(DOCUMENT).html
-	-make tidy
+	# -make tidy
 	cat $(DOCUMENT).html | sed -e "s/&#10086;/*/g" | sed -e "s/&#10087;/*/g" | sed -e "s/&#10037;/*/g" | sed -e "s/&#9788;/*/g" | sed -e "s/&#9789;/*/g" | sed -e "s/&#9790;/*/g" | sed -e "s/&#9675;/*/g" |\
 	sed -e "s/ : <b><a onclick/, rendez-vous au <b><a onclick/g" |\
 	sed -e "s/el[1-9].style.visibility = 'hidden';//g" |\
 	sed -e "s/span.c[1-9] {display:none}//g" |\
 	sed -e "s/span.c[1-9] {display: none}//g" |\
 	sed -e "s/div.c[1-9] {display:none}//g" |\
-	sed -e "s/span.c[1-9] {visibility:hidden}//g" > $(DOCUMENT)2.html
+	sed -e "s/span.c[1-9] {visibility:hidden}//g" |\
+	sed -e 's/<div id="\([a-zA-Z0-9_]*\)"\( style="display:\(none\|block\)"\)\?>/<span id="\1"><\/span>/g' |\
+	sed -e 's/<p><br\/><br\/><br\/><\/p><\/div>/<p><br\/><br\/><br\/><\/p>/g' > $(DOCUMENT)2.html
 	mv $(DOCUMENT)2.html $(DOCUMENT).html
 	#
-	ebook-convert $(DOCUMENT).html $(DOCUMENT).epub --max-levels 0 --pretty-print --level1-toc //h:h1 --level2-toc //h:h2 --level3-toc //h:h3 --max-toc-links 0 --toc-threshold 3  --chapter-mark pagebreak --page-breaks-before //h:div[@id] --cover $(DOCUMENT_COVER) --extra-css $(TEXTALLIONFOLDER)/includes/epub.css --no-default-epub-cover --no-svg-cover --preserve-cover-aspect-ratio --no-chapters-in-toc
-	#
-	ebook-meta  $(DOCUMENT).epub --title "$(DOCUMENT_TITLE)" --authors "$(DOCUMENT_AUTHOR)" --tags "$(DOCUMENT_TAGS)" --language $(DOCUMENT_LANGUAGE) --book-producer 'textallion & txt2cyoa - https://textallion.sourceforge.io' --comments 'textallion - https://textallion.sourceforge.io' --cover $(DOCUMENT_COVER) 
+	sh $(TEXTALLIONFOLDER)/core/epub-generator.sh $(DOCUMENT).html $(DOCUMENT).epub --title "$(DOCUMENT_TITLE)" --authors "$(DOCUMENT_AUTHOR)" --tags "$(DOCUMENT_TAGS)" --language $(DOCUMENT_LANGUAGE) --cover $(DOCUMENT_COVER) --css $(TEXTALLIONFOLDER)/includes/epub.css --comments "textallion - https://textallion.sourceforge.io" --producer "textallion & txt2cyoa - https://textallion.sourceforge.io" --split-level 2
 
 
 cyoa-graph:	

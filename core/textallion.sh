@@ -1,4 +1,4 @@
-#!/usr/bin/env sh
+#!/bin/sh
 
 # %%%% Textallion %%%%
 # Tiny almost-Kiss Word Processor
@@ -8,7 +8,15 @@
 
 # initiate the variables, from the user's input
 
-alias GETTEXT='gettext "TEXTALLION"'
+# (a function, not an alias: aliases are not expanded by bash in scripts.
+# Falls back to the untranslated text if gettext is not installed.)
+GETTEXT(){
+	if command -v gettext >/dev/null 2>&1; then
+		gettext "TEXTALLION" "$1"
+	else
+		printf '%s' "$1"
+	fi
+}
 
 #TEXTDOMAINDIR=./
 #TEXTDOMAIN=textallion.sh
@@ -51,7 +59,7 @@ GAME_NOT_EXISTS=$(GETTEXT "This game is not existing, please choose another one 
 DOCUMENT_NOT_EXISTS=$(GETTEXT "This document is not existing, please choose another one or create a new one.")
 YOUR_EXISTING_GAMES=$(GETTEXT "Here are your already existing games:")
 YOUR_EXISTING_DOC=$(GETTEXT "Here are your already existing documents:")
-WHICH_ONE_DO_YOU_SELECT=$(GETTEXT "Which one do you select? (please type the full name, but you can omit the \"cyoa-\ or \"lettre-\" part in it if it applies.)")
+WHICH_ONE_DO_YOU_SELECT=$(GETTEXT "Which one do you select? (please type the full name, but you can omit the \"cyoa-\" or \"lettre-\" part in it if it applies.)")
 GRAPH_NODES=$(GETTEXT "a graph of the nodes")
 INITIATE_NEW_DOC=$(GETTEXT "This script will initiate a new document. All requested data are mandatory, except for the tags and the language code.")
 MANIPULATE=$(GETTEXT "Manipulate")
@@ -67,15 +75,19 @@ DOCUMENT_DOC=$(GETTEXT "general purpose document (book, article...)")
 
 
 
+# $1: exit code (default 0)
 usage()
 {
 	echo "Usage: textallion init"
 	echo "         initiate a new document"
 	echo ""
-	echo "       textallion command"
-	echo "         for using within a makefile"
+	echo "       textallion list"
+	echo "         list the documents of ${TEXTALLIONDOCSPATH}"
 	echo ""
-	exit 0
+	echo "       textallion command"
+	echo "         for using within a makefile (cyoa_dialog, cyoa_ramus2)"
+	echo ""
+	exit "${1:-0}"
 }
 
 
@@ -94,30 +106,158 @@ usage()
 # sudo install fr.mo /usr/share/locale/fr/LC_MESSAGES/TEXTALLION.mo
 # LANGUAGE=fr  ./textallion.sh
 
+
+## Helpers
+# (no "local" in this script: ksh, the sh of OpenBSD, does not have it. The
+# variables of the functions are global, so keep their names distinct.)
+
+is_cygwin(){
+	case $(uname) in
+		CYGWIN*) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
 # make a pause. Resume by keypress.
 pause(){
 	echo ""
 	echo "($PRESS_KEY)"
 	echo ""
-	read -s -n 1 -p "$*"
+	if [ -t 0 ]; then
+		_stty=$(stty -g)
+		trap 'stty "$_stty"; exit 130' INT
+		stty -echo -icanon min 1 time 0
+		dd bs=1 count=1 >/dev/null 2>&1
+		stty "$_stty"
+		trap - INT
+	else
+		# input is not a terminal (pipe, file): just consume one character
+		dd bs=1 count=1 >/dev/null 2>&1
+	fi
+}
+
+# read a line into the variable named $1. Leave the program on end of input
+# (ctrl-d), otherwise the menus would loop forever.
+ask(){
+	read -r "$1" || { echo ""; quit; }
 }
 
 banner(){
-	if [[ `uname` =~ "CYGWIN" ]] ; then echo "" ; else clear
-	fi
+	is_cygwin || clear 2>/dev/null
 	printf "\n
  @---------------@
  / Le Textallion /
  @---------------@\n\n"
 }
 
-introduction(){
-	if [[ `uname` =~ "CYGWIN" ]] ; then echo "" ; else clear
+# run "make $@" inside the folder of the current document
+run_make(){
+	( cd "${TEXTALLIONDOCSPATH}/${DOCUMENTNAME}" && make "$@" )
+}
+
+# open a shell inside the folder of the current document
+shell_in_folder(){
+	printf "(Type ctrl-d to exit once you have finished.)\n\n"
+	( cd "${TEXTALLIONDOCSPATH}/${DOCUMENTNAME}" && "${SHELL:-bash}" )
+}
+
+read_pdf(){
+	if is_cygwin; then
+		echo "If SumatraPDF is not installed, please enter ${TEXTALLIONDOCSPATH}/${DOCUMENTNAME} and open the PDF from there."
+		( cd "${TEXTALLIONDOCSPATH}/${DOCUMENTNAME}" && sumatrapdf "${DOCUMENTNAME}.pdf" )
+	else
+		run_make read
 	fi
-	printf "\n
- @----------------------------------------@
- / Le Textallion, a simple word processor /
- @----------------------------------------@\n\n\n"
+}
+
+# sed_inplace FILE SED_ARGS...: portable "sed -i" (the GNU and BSD versions
+# of the option are not compatible)
+sed_inplace(){
+	_file=$1
+	shift
+	sed "$@" "$_file" > "${_file}.tmp$$" && cat "${_file}.tmp$$" > "$_file"
+	rm -f "${_file}.tmp$$"
+}
+
+# escape a string for the replacement part of a sed "s@...@...@" command
+sed_escape(){
+	printf '%s' "$1" | sed -e 's/[\\&@]/\\&/g'
+}
+
+# escape a string for the text of an XML/SVG document
+xml_escape(){
+	printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+}
+
+# turn a name into a safe folder name: no accents, lower case, only a-z 0-9 _ -
+# (alternations, not [bracket] sets: some sed work on bytes, not on UTF-8 characters)
+slugify(){
+	printf '%s' "$1" | sed -E \
+		-e 's/(ê|è|é|ë|Ê|È|É|Ë)/e/g' \
+		-e 's/(î|ì|í|ï|Î|Ì|Í|Ï)/i/g' \
+		-e 's/(á|å|à|ä|â|À|Á|Â|Ä)/a/g' \
+		-e 's/(ø|ô|ó|ò|ö|Ô|Ò|Ó|Ö)/o/g' \
+		-e 's/(ü|û|ù|ú|Ù|Ú|Û|Ü)/u/g' \
+		-e 's/(ç|Ç)/c/g' \
+		-e 's/(ÿ|Ÿ)/y/g' \
+		-e 's/(œ|Œ)/oe/g' \
+		-e 's/(æ|Æ)/ae/g' |
+	tr 'A-Z' 'a-z' | sed -e 's/[^a-z0-9_-]/_/g' -e 's/__*/_/g'
+}
+
+# quote a value for a txt2tags %!postproc rule: an apostrophe inside 'quotes'
+# would leave the quotes in the replacement text
+t2t_quote(){
+	case $1 in
+		*\'*)
+			case $1 in
+				*\"*) printf "'%s'" "$1" ;;
+				*) printf '"%s"' "$1" ;;
+			esac
+			;;
+		*) printf "'%s'" "$1" ;;
+	esac
+}
+
+# print the folders of textalliondocs of one kind: doc, cyoa or lettre
+list_projects(){
+	for d in "${TEXTALLIONDOCSPATH}"/*/; do
+		[ -d "$d" ] || continue
+		n=${d%/}
+		n=${n##*/}
+		case $n in
+			cyoa-*) k=cyoa ;;
+			lettre-*) k=lettre ;;
+			*) k=doc ;;
+		esac
+		[ "$k" = "$1" ] && printf '%s  ' "$n"
+	done
+	echo ""
+}
+
+# ask which project of kind $1 (doc, cyoa, lettre) to open, the prefix $2
+# (cyoa-, lettre-) being optional in the answer. Set DOCUMENTNAME and return 0
+# if the project exists.
+select_project(){
+	printf "\n\n$WHICH_ONE_DO_YOU_SELECT\n\n"
+	ask DOCUMENTNAME
+	case $DOCUMENTNAME in
+		""|*/*|.*) return 1 ;;
+	esac
+	if [ -f "${TEXTALLIONDOCSPATH}/${DOCUMENTNAME}/${DOCUMENTNAME}.t2t" ]; then
+		return 0
+	elif [ -n "$2" ] && [ -f "${TEXTALLIONDOCSPATH}/$2${DOCUMENTNAME}/$2${DOCUMENTNAME}.t2t" ]; then
+		DOCUMENTNAME=$2${DOCUMENTNAME}
+		return 0
+	fi
+	return 1
+}
+
+
+## Menus
+
+introduction(){
+	banner
 	echo "1: $CREATE_NEW document"
 	echo "2: $MANIPULATE_SOURCE"
 	echo ""
@@ -125,38 +265,38 @@ introduction(){
 	echo "4: $HELP"
 	echo "0: $QUIT"
 	echo ""
-read ACTION
+	ask ACTION
 
-case $ACTION in
-				create | new | "1")
-					choose_type_document
-					;;
-				generate| manipulate | "2")
-					choose_doc
-					;;
-				other|more|"3")
-					manipulate_ter
-					;;
-				help|"4")
-					help
-					;;
-				quit|"0")
-					quit
-					;;
-				*)
-					introduction
-					;;
-esac
+	case $ACTION in
+		create | new | "1")
+			choose_type_document
+			;;
+		generate| manipulate | "2")
+			choose_doc
+			;;
+		other|more|"3")
+			manipulate_ter
+			;;
+		help|"4")
+			show_help
+			;;
+		quit|"0")
+			quit
+			;;
+		*)
+			introduction
+			;;
+	esac
 }
 
-help(){
+show_help(){
 	echo "This command-line interface is a replacement for the manipulation of a makefile. Please visit https://textallion.sourceforge.io for more informations about textallion."
 	pause
 	introduction
 }
 
 test_OS(){
-if [[ `uname` =~ "CYGWIN" ]]; then
+if is_cygwin; then
     OS=Win
     #export?
 	TEXTALLIONPATH=C:/cygwin/usr/share/textallion/
@@ -167,37 +307,46 @@ else
     #export?
 	TEXTALLIONPATH=/usr/share/textallion/
 	#TEXTALLIONDOCSPATH=~/textalliondocs
-	SUDO=sudo
+	if command -v sudo >/dev/null 2>&1; then
+		SUDO=sudo
+	elif command -v doas >/dev/null 2>&1; then
+		SUDO=doas
+	else
+		SUDO=
+	fi
+	# no need for sudo if we are root
+	[ "$(id -u)" = 0 ] && SUDO=
 fi
 }
 
 updatetextallion(){
-if [ ! -d $TEXTALLIONPATH ]; then
+if [ ! -d "$TEXTALLIONPATH" ]; then
 	echo "$TEXTALLIONPATH is not present on this system. We'll try to run the installer instead."
 	pause
 	installtextallion
+elif [ ! -d "${TEXTALLIONPATH}/.git" ]; then
+	echo "$TEXTALLIONPATH is not a git clone, so it can't be updated from here. Update it by running textallion_install.sh from a fresh clone of https://github.com/farvardin/textallion"
 else
-	cd $TEXTALLIONPATH
-	$SUDO git pull
+	$SUDO git -C "$TEXTALLIONPATH" pull
 fi
 }
 
 installtextallion(){
-if [ -e $TEXTALLIONPATH ]; then
+if [ -e "$TEXTALLIONPATH" ]; then
 	echo "$TEXTALLIONPATH $IS_ALREADY_PRESENT on this system. We'll try to run the updater instead."
 	pause
 	updatetextallion
 else
 	echo "Textallion will be installed into $TEXTALLIONPATH: this folder will be created, then it will try to be cloned from the GitHub repository. Is it ok? (Y/n)"
-		read choice
-			case $choice in
-					"n"|"N"|"no"|"NO"|"non")
-						echo "Nothing was changed in your configuration"
-						;;
-					"y"|"Y"|"yes"|*)
-					$SUDO git clone https://github.com/farvardin/textallion $TEXTALLIONPATH
-						;;
-			esac
+	ask choice
+	case $choice in
+		"n"|"N"|"no"|"NO"|"non")
+			echo "Nothing was changed in your configuration"
+			;;
+		*)
+			$SUDO git clone https://github.com/farvardin/textallion "$TEXTALLIONPATH"
+			;;
+	esac
 fi
 }
 
@@ -209,23 +358,16 @@ exit
 
 choose_doc(){
 banner
-if [ -e ${TEXTALLIONDOCSPATH} ]; then
+if [ -d "${TEXTALLIONDOCSPATH}" ]; then
 	printf "$YOUR_EXISTING_DOC \n  \n"
-	#ls ${TEXTALLIONDOCSPATH}/
-	# scan only for folders, and remove cyoa games and the trailing slash
-	ls -p ${TEXTALLIONDOCSPATH}/ | grep "/" | sed 's@/@ @' | sed 's@cyoa-[a-z_-]*@@' | tr -d "\n"
-
-	printf "\n\n$WHICH_ONE_DO_YOU_SELECT\n"
-	echo ""
-	read DOCUMENTNAME
-	#export DOCUMENTNAME
-		if [ -f ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME/$DOCUMENTNAME.t2t ]; then
-			manipulate_doc
-		else
-			echo "$DOCUMENT_NOT_EXISTS"
-			pause
-			introduction
-		fi
+	list_projects doc
+	if select_project doc ""; then
+		manipulate_doc
+	else
+		echo "$DOCUMENT_NOT_EXISTS"
+		pause
+		introduction
+	fi
 else
 	printf "$FIRST_TIME_USER \n"
 	pause
@@ -251,63 +393,55 @@ manipulate_doc(){
 	echo ""
 	echo "0: $PREVIOUS_MENU"
 	echo ""
-	read ACTION
-case $ACTION in
-				edit | "1")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME/
-					make edit
-					manipulate_doc
-					;;
-				html|"2")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make html
-					pause
-					manipulate_doc
-					;;
-				pdf|"3")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make pdf
-					pause
-					manipulate_doc
-					;;
-				epub|"4")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make epub
-					pause
-					manipulate_doc
-					;;
-				readhtml|"5")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make readhtml
-					pause
-					manipulate_doc
-					;;
-				read|"6")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-						if [[ `uname` =~ "CYGWIN" ]] ; then echo "If SumatraPDF is not installed, please enter ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME and open the PDF from there." ; sumatrapdf $DOCUMENTNAME.pdf ; else make read
-						fi
-					pause
-					manipulate_doc
-					;;
-				readepub|"7")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make readepub
-					pause
-					manipulate_doc
-					;;
-				more|"8")
-					manipulate_bis
-					;;
-				another|"9")
-					choose_doc
-					;;
-				previous|"0")
-					introduction
-					;;
-				*)
-					manipulate_doc
-					;;
-esac
+	ask ACTION
+	case $ACTION in
+		edit | "1")
+			run_make edit
+			manipulate_doc
+			;;
+		html|"2")
+			run_make html
+			pause
+			manipulate_doc
+			;;
+		pdf|"3")
+			run_make pdf
+			pause
+			manipulate_doc
+			;;
+		epub|"4")
+			run_make epub
+			pause
+			manipulate_doc
+			;;
+		readhtml|"5")
+			run_make readhtml
+			pause
+			manipulate_doc
+			;;
+		read|"6")
+			read_pdf
+			pause
+			manipulate_doc
+			;;
+		readepub|"7")
+			run_make readepub
+			pause
+			manipulate_doc
+			;;
+		more|"8")
+			manipulate_bis
+			;;
+		another|"9")
+			choose_doc
+			;;
+		previous|"0")
+			introduction
+			;;
+		*)
+			manipulate_doc
+			;;
+	esac
 }
 
 
@@ -325,45 +459,39 @@ manipulate_bis(){
 	echo ""
 	echo "0: $PREVIOUS_MENU"
 	echo ""
-	read ACTION
-case $ACTION in
-				all|"1")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make all
-					pause
-					manipulate_bis
-					;;
-				readindex|"2")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make readindex
-					pause
-					manipulate_bis
-					;;
-				synchronize|"3")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make configuration-update
-					pause
-					manipulate_bis
-					;;
-				cmd|"9")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME/
-					printf "(Type ctrl-d to exit once you have finished.)\n\n"
-					bash -
-					;;
-				cover|"5")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME/
-					make cover
-					pause
-					manipulate_bis
-					;;
-				previous|"0")
-					manipulate_doc
-					;;
-
-				*)
-					manipulate_bis
-					;;
-esac
+	ask ACTION
+	case $ACTION in
+		all|"1")
+			run_make all
+			pause
+			manipulate_bis
+			;;
+		readindex|"2")
+			run_make readindex
+			pause
+			manipulate_bis
+			;;
+		synchronize|"3")
+			run_make configuration-update
+			pause
+			manipulate_bis
+			;;
+		cmd|"9")
+			shell_in_folder
+			manipulate_bis
+			;;
+		cover|"5")
+			run_make cover
+			pause
+			manipulate_bis
+			;;
+		previous|"0")
+			manipulate_doc
+			;;
+		*)
+			manipulate_bis
+			;;
+	esac
 }
 
 manipulate_ter(){
@@ -381,50 +509,50 @@ manipulate_ter(){
 	echo ""
 	echo "0: $PREVIOUS_MENU"
 	echo ""
-	read ACTION
-case $ACTION in
-				cyoa|"1")
-					create_new_cyoa
-					pause
-					manipulate_ter
-					;;
-				manipulate|"2")
-					choose_cyoa
-					pause
-					manipulate_ter
-					;;
-				lettre|"3")
-					create_new_lettre
-					pause
-					manipulate_ter
-					;;
-				lettreedit|"4")
-					choose_lettre
-					pause
-					manipulate_ter
-					;;
-				changelang|"6")
-					changelanguage
-					pause
-					manipulate_ter
-					;;
-				install|"7")
-					installtextallion
-					pause
-					manipulate_ter
-					;;
-				update|"8")
-					updatetextallion
-					pause
-					manipulate_ter
-					;;
-				previous|"0")
-					introduction
-					;;
-				*)
-					manipulate_ter
-					;;
-esac
+	ask ACTION
+	case $ACTION in
+		cyoa|"1")
+			create_new_cyoa
+			pause
+			manipulate_ter
+			;;
+		manipulate|"2")
+			choose_cyoa
+			pause
+			manipulate_ter
+			;;
+		lettre|"3")
+			create_new_lettre
+			pause
+			manipulate_ter
+			;;
+		lettreedit|"4")
+			choose_lettre
+			pause
+			manipulate_ter
+			;;
+		changelang|"6")
+			changelanguage
+			pause
+			manipulate_ter
+			;;
+		install|"7")
+			installtextallion
+			pause
+			manipulate_ter
+			;;
+		update|"8")
+			updatetextallion
+			pause
+			manipulate_ter
+			;;
+		previous|"0")
+			introduction
+			;;
+		*)
+			manipulate_ter
+			;;
+	esac
 }
 
 changelanguage(){
@@ -434,7 +562,7 @@ changelanguage(){
 	echo ""
 	echo "0: $PREVIOUS_MENU"
 	echo ""
-	read ACTION
+	ask ACTION
 	case $ACTION in
 		english|"1")
 			export LANGUAGE=en
@@ -448,113 +576,105 @@ changelanguage(){
 			pause
 			introduction
 			;;
-			previous|"0")
-				introduction
-				;;
-			*)
-				changelanguage
-				;;
+		previous|"0")
+			introduction
+			;;
+		*)
+			changelanguage
+			;;
 	esac
 }
 
-create_new_doc(){
-banner
-printf "$INITIATE_NEW_DOC.\n\n"
 
-echo "$WHAT_IS_FILE_NAME"
-read DOCUMENTNAME
+## Creation of a new document, game or letter
 
-echo "$WHAT_IS_DOC_NAME"
-read DOCUMENTTITLE
+# create_project KIND: KIND is doc, cyoa or lettre. Ask for the metadata, then
+# create the folder. Return 0 if the project was created (its folder name is
+# then in DOCUMENTFOLDER).
+create_project(){
+	kind=$1
+	prefix=
+	case $kind in
+		cyoa)
+			prefix=cyoa-
+			nameprompt="$WHAT_IS_FILE_NAME We'll add cyoa- to the title."
+			;;
+		lettre)
+			prefix=lettre-
+			nameprompt="What is the name of the lettre file (and folder) to be created? (Try to avoid accented letters, spaces and funky characters). We'll add lettre- to the title."
+			;;
+		*)
+			nameprompt=$WHAT_IS_FILE_NAME
+			;;
+	esac
 
-echo "$WHO_IS_AUTHOR"
-read AUTHORNAME
+	banner
+	printf '%s\n\n' "$INITIATE_NEW_DOC"
 
-echo "$WHAT_TAGS"
-read DOCTAGS
+	# replace space by underscore for the output files, remove accented letters, lower case
+	while :; do
+		echo "$nameprompt"
+		ask DOCUMENTNAME
+		slug=$(slugify "$DOCUMENTNAME")
+		DOCUMENTFOLDER=${prefix}${slug}
+		if [ -z "$slug" ]; then
+			echo "A name is needed."
+		elif [ -e "${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}" ]; then
+			echo "$THIS_FOLDER ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER} $IS_ALREADY_PRESENT. Please choose another name or remove this folder."
+		else
+			break
+		fi
+		pause
+	done
 
-echo "$WHAT_IS_LANGUAGE_CODE"
-read DOCLANG
+	echo "$WHAT_IS_DOC_NAME"
+	ask DOCUMENTTITLE
 
-# replace space by underscore for the output files, remove accented letters, lower case
+	echo "$WHO_IS_AUTHOR"
+	ask AUTHORNAME
 
-# DOCUMENTFOLDER=`echo ${DOCUMENTNAME} | sed 's/ /_/g' | sed 's/\x27/_/g' | sed 's/[êèéëÊÈÉË]/e/g' | sed 's/[îìíïÎÏ]/i/g' | sed 's/[áåàäâÀÂÄ]/a/g' | sed 's/[øôóòöÔÖ]/o/g' | sed 's/[üûùúÙÛÜ]/u/g' | sed y/ABCDEFGHIJKLMNOPQRSTUVWXYZçÿ/abcdefghijklmnopqrstuvwxyzcy/`
+	echo "$WHAT_TAGS"
+	ask DOCTAGS
 
-DOCUMENTFOLDER=`echo ${DOCUMENTNAME} | sed 's/ /_/g' | sed 's/\x27/_/g' | sed 's/[êèéëÊÈÉË]/e/g' | sed 's/[îìíïÎÏ]/i/g' | sed 's/[áåàäâÀÂÄ]/a/g' | sed 's/[øôóòöÔÖ]/o/g' | sed 's/ç/c/g' | sed 's/[üûùúÙÛÜ]/u/g' | sed 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/'`
+	echo "$WHAT_IS_LANGUAGE_CODE"
+	ask DOCLANG
+	[ -n "$DOCLANG" ] || DOCLANG=en
 
-# now test existing folder and finish the generation
-export CYOASTATUS=
-export CYOAINIT=
-test_folder
-
-# continue to the manipulation options
-export DOCUMENTNAME=$DOCUMENTFOLDER
-manipulate_doc
+	if [ "$kind" = lettre ]; then
+		setup_lettre
+	else
+		setup "$kind"
+	fi
 }
 
+create_new_doc(){
+	create_project doc || return
+	# continue to the manipulation options
+	export DOCUMENTNAME=$DOCUMENTFOLDER
+	manipulate_doc
+}
 
 
 ## CYOA
 
-
-
 create_new_cyoa(){
-banner
-printf "$INITIATE_NEW_DOC\n\n"
-
-echo "$WHAT_IS_FILE_NAME We'll add cyoa- to the title."
-read DOCUMENTNAME
-
-echo "$WHAT_IS_DOC_NAME"
-read DOCUMENTTITLE
-
-echo "$WHO_IS_AUTHOR"
-read AUTHORNAME
-
-echo "$WHAT_TAGS"
-read DOCTAGS
-
-echo "$WHAT_IS_LANGUAGE_CODE"
-read DOCLANG
-
-# replace space by underscore for the output files, remove accented letters, lower case
-
-DOCUMENTFOLDER=cyoa-`echo ${DOCUMENTNAME} | sed 's/ /_/g' | sed 's/\x27/_/g' | sed 's/[êèéëÊÈÉË]/e/g' | sed 's/[îìíïÎÏ]/i/g' | sed 's/[áåàäâÀÂÄ]/a/g' | sed 's/[øôóòöÔÖ]/o/g' | sed 's/[üûùúÙÛÜ]/u/g' | sed y/ABCDEFGHIJKLMNOPQRSTUVWXYZçÿ/abcdefghijklmnopqrstuvwxyzcy/ `
-
-# now test existing folder and finish the generation
-# (now includeconf txt2tags.t2t will be included into the makefile)
-#export CYOASTATUS="%!includeconf: /usr/share/textallion/core/txt2cyoa.t2t\n"
-export CYOASTATUS=""
-export CYOAINIT="== 0 ==\n\n- Start the game: 1\n\n\n== 1 ==\n\n\n"
-test_cyoa_folder
-
-# continue to the manipulation options
-export DOCUMENTNAME=$DOCUMENTFOLDER
-manipulate_cyoa
+	create_project cyoa || return
+	export DOCUMENTNAME=$DOCUMENTFOLDER
+	manipulate_cyoa
 }
 
 choose_cyoa(){
 banner
-if [ -e ${TEXTALLIONDOCSPATH} ]; then
+if [ -d "${TEXTALLIONDOCSPATH}" ]; then
 	printf "$YOUR_EXISTING_GAMES \n  \n"
-	#ls ${TEXTALLIONDOCSPATH}/
-	# scan only for folders beginning by cyoa-, and remove the trailing slash
-	ls -p ${TEXTALLIONDOCSPATH}/ | grep "cyoa-" | sed 's@/@ @' | tr -d "\n"
-
-	printf "\n\n$WHICH_ONE_DO_YOU_SELECT\n"
-	echo ""
-	read DOCUMENTNAME
-	#export DOCUMENTNAME
-		if [ -f ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME/$DOCUMENTNAME.t2t ]; then
-			manipulate_cyoa
-	    elif [ -f ${TEXTALLIONDOCSPATH}/cyoa-$DOCUMENTNAME/cyoa-$DOCUMENTNAME.t2t ]; then
-			export DOCUMENTNAME=cyoa-$DOCUMENTNAME
-			manipulate_cyoa
-		else
-			echo "$GAME_NOT_EXISTS"
-			pause
-			manipulate_ter
-		fi
+	list_projects cyoa
+	if select_project cyoa cyoa-; then
+		manipulate_cyoa
+	else
+		echo "$GAME_NOT_EXISTS"
+		pause
+		manipulate_ter
+	fi
 else
 	printf "$FIRST_TIME_USER \n"
 	pause
@@ -580,63 +700,55 @@ manipulate_cyoa(){
 	echo ""
 	echo "0: $PREVIOUS_MENU"
 	echo ""
-	read ACTION
-case $ACTION in
-				edit | "1")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME/
-					make edit
-					manipulate_cyoa
-					;;
-				html|"2")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make cyoa-html
-					pause
-					manipulate_cyoa
-					;;
-				pdf|"3")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make cyoa-pdf
-					pause
-					manipulate_cyoa
-					;;
-				epub|"4")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make cyoa-epub
-					pause
-					manipulate_cyoa
-					;;
-				readhtml|"5")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make readhtml
-					pause
-					manipulate_cyoa
-					;;
-				read|"6")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-						if [[ `uname` =~ "CYGWIN" ]] ; then echo "If SumatraPDF is not installed, please enter ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME and open the PDF from there." ; sumatrapdf $DOCUMENTNAME.pdf ; else make read
-						fi
-					pause
-					manipulate_cyoa
-					;;
-				readepub|"7")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make readepub
-					pause
-					manipulate_cyoa
-					;;
-				more|"8")
-					manipulate_cyoa2
-					;;
-				another|"9")
-					choose_cyoa
-					;;
-				previous|"0")
-					manipulate_ter
-					;;
-				*)
-					manipulate_cyoa
-					;;
-esac
+	ask ACTION
+	case $ACTION in
+		edit | "1")
+			run_make edit
+			manipulate_cyoa
+			;;
+		html|"2")
+			run_make cyoa-html
+			pause
+			manipulate_cyoa
+			;;
+		pdf|"3")
+			run_make cyoa-pdf
+			pause
+			manipulate_cyoa
+			;;
+		epub|"4")
+			run_make cyoa-epub
+			pause
+			manipulate_cyoa
+			;;
+		readhtml|"5")
+			run_make readhtml
+			pause
+			manipulate_cyoa
+			;;
+		read|"6")
+			read_pdf
+			pause
+			manipulate_cyoa
+			;;
+		readepub|"7")
+			run_make readepub
+			pause
+			manipulate_cyoa
+			;;
+		more|"8")
+			manipulate_cyoa2
+			;;
+		another|"9")
+			choose_cyoa
+			;;
+		previous|"0")
+			manipulate_ter
+			;;
+		*)
+			manipulate_cyoa
+			;;
+	esac
 }
 
 
@@ -656,68 +768,59 @@ manipulate_cyoa2(){
 	echo ""
 	echo "0: $PREVIOUS_MENU"
 	echo ""
-	read ACTION
-case $ACTION in
-				graph | "1")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make cyoa-graph
-					pause
-					manipulate_cyoa2
-					;;
-				ramus|"2")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make cyoa-ramus
-					pause
-					manipulate_cyoa2
-					;;
-				renpy|"3")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make cyoa-renpy
-					pause
-					manipulate_cyoa2
-					;;
-				hyena|"4")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make cyoa-hyena
-					pause
-					manipulate_cyoa2
-					;;
-				twee|twine|"5")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make cyoa-twee
-					pause
-					manipulate_cyoa2
-					;;
-				undum|"6")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make cyoa-undum
-					pause
-					manipulate_cyoa2
-					;;
-				inform7|"8")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make cyoa-inform7
-					pause
-					manipulate_cyoa2
-					;;
-				cs|choicescript|"7")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make cyoa-cs
-					pause
-					manipulate_cyoa2
-					;;
-				cmd|"9")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME/
-					printf "(Type ctrl-d to exit once you have finished.)\n\n"
-					bash -
-					;;
-				previous|"0")
-					manipulate_cyoa
-					;;
-				*)
-					manipulate_cyoa2
-					;;
-esac
+	ask ACTION
+	case $ACTION in
+		graph | "1")
+			run_make cyoa-graph
+			pause
+			manipulate_cyoa2
+			;;
+		ramus|"2")
+			run_make cyoa-ramus
+			pause
+			manipulate_cyoa2
+			;;
+		renpy|"3")
+			run_make cyoa-renpy
+			pause
+			manipulate_cyoa2
+			;;
+		hyena|"4")
+			run_make cyoa-hyena
+			pause
+			manipulate_cyoa2
+			;;
+		twee|twine|"5")
+			run_make cyoa-twee
+			pause
+			manipulate_cyoa2
+			;;
+		undum|"6")
+			run_make cyoa-undum
+			pause
+			manipulate_cyoa2
+			;;
+		inform7|"8")
+			run_make cyoa-inform7
+			pause
+			manipulate_cyoa2
+			;;
+		cs|choicescript|"7")
+			run_make cyoa-cs
+			pause
+			manipulate_cyoa2
+			;;
+		cmd|"9")
+			shell_in_folder
+			manipulate_cyoa2
+			;;
+		previous|"0")
+			manipulate_cyoa
+			;;
+		*)
+			manipulate_cyoa2
+			;;
+	esac
 }
 
 
@@ -725,62 +828,23 @@ esac
 ### Lettre
 
 create_new_lettre(){
-banner
-printf "$INITIATE_NEW_DOC\n\n"
-
-echo "What is the name of the lettre file (and folder) to be created? (Try to avoid accented letters, spaces and funky characters). We'll add lettre- to the title."
-read DOCUMENTNAME
-
-echo "What is the title name of the document file to be created? "
-read DOCUMENTTITLE
-
-echo "WHO_IS_AUTHOR"
-read AUTHORNAME
-
-echo "What are the tags defining this document (separated by commas)?"
-read DOCTAGS
-
-echo "What is the language code of the document (2 letters, i.e. 'en' for English)?"
-read DOCLANG
-
-# replace space by underscore for the output files, remove accented letters, lower case
-
-DOCUMENTFOLDER=lettre-`echo ${DOCUMENTNAME} | sed 's/ /_/g' | sed 's/\x27/_/g' | sed 's/[êèéëÊÈÉË]/e/g' | sed 's/[îìíïÎÏ]/i/g' | sed 's/[áåàäâÀÂÄ]/a/g' | sed 's/[øôóòöÔÖ]/o/g' | sed 's/[üûùúÙÛÜ]/u/g' | sed s/ABCDEFGHIJKLMNOPQRSTUVWXYZçÿ/abcdefghijklmnopqrstuvwxyzcy/g `
-
-# now test existing folder and finish the generation
-# (now includeconf txt2tags.t2t will be included into the makefile)
-#export lettreSTATUS="%!includeconf: ${TEXTALLIONPATH}/core/txt2lettre.t2t\n"
-export lettreSTATUS=""
-export lettreINIT="% TODO"
-test_lettre_folder
-
-# continue to the manipulation options
-export DOCUMENTNAME=$DOCUMENTFOLDER
-manipulate_lettre
+	create_project lettre || return
+	export DOCUMENTNAME=$DOCUMENTFOLDER
+	manipulate_lettre
 }
 
 choose_lettre(){
 banner
-if [ -e ${TEXTALLIONDOCSPATH} ]; then
+if [ -d "${TEXTALLIONDOCSPATH}" ]; then
 	printf "$YOUR_EXISTING_DOC \n  \n"
-	#ls ${TEXTALLIONDOCSPATH}/
-	# scan only for folders beginning by lettre-, and remove the trailing slash
-	ls -p ${TEXTALLIONDOCSPATH}/ | grep "lettre-" | sed 's@/@ @' | tr -d "\n"
-
-	printf "\n\n$WHICH_ONE_DO_YOU_SELECT \n"
-	echo ""
-	read DOCUMENTNAME
-	#export DOCUMENTNAME
-		if [ -f ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME/$DOCUMENTNAME.t2t ]; then
-			manipulate_lettre
-	    elif [ -f ${TEXTALLIONDOCSPATH}/lettre-$DOCUMENTNAME/lettre-$DOCUMENTNAME.t2t ]; then
-			export DOCUMENTNAME=lettre-$DOCUMENTNAME
-			manipulate_lettre
-		else
-			echo "$DOCUMENT_NOT_EXISTS"
-			pause
-			manipulate_ter
-		fi
+	list_projects lettre
+	if select_project lettre lettre-; then
+		manipulate_lettre
+	else
+		echo "$DOCUMENT_NOT_EXISTS"
+		pause
+		manipulate_ter
+	fi
 else
 	printf "$FIRST_TIME_USER \n"
 	pause
@@ -801,252 +865,209 @@ manipulate_lettre(){
 	echo ""
 	echo "7: Clean folder (remove temporary files)"
 	echo ""
-	echo "8: More options (none at the moment)"
-	echo ""
 	echo "9: $CHOOSE_ANOTHER_DOC"
 	echo ""
 	echo "0: $PREVIOUS_MENU"
 	echo ""
-	read ACTION
-case $ACTION in
-				edit | "1")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME/
-					make edit
-					manipulate_lettre
-					;;
-				html|"2")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make lettre-html
-					pause
-					manipulate_lettre
-					;;
-				pdf|"3")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make lettre
-					pause
-					manipulate_lettre
-					;;
-				epub|"4")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make lettre-epub
-					pause
-					manipulate_lettre
-					;;
-				readhtml|"5")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make readhtml
-					pause
-					manipulate_lettre
-					;;
-				read|"6")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-						if [[ `uname` =~ "CYGWIN" ]] ; then echo "If SumatraPDF is not installed, please enter ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME and open the PDF from there." ; sumatrapdf $DOCUMENTNAME.pdf ; else make read
-						fi
-					pause
-					manipulate_lettre
-					;;
-				clean|"7")
-					cd ${TEXTALLIONDOCSPATH}/$DOCUMENTNAME
-					make clean
-					manipulate_lettre
-					;;
-				more|"8")
-					manipulate_lettre2
-					;;
-				another|"9")
-					choose_lettre
-					;;
-				previous|"0")
-					manipulate_ter
-					;;
-				*)
-					manipulate_lettre
-					;;
-esac
+	ask ACTION
+	case $ACTION in
+		edit | "1")
+			run_make edit
+			manipulate_lettre
+			;;
+		html|"2")
+			run_make lettre-html
+			pause
+			manipulate_lettre
+			;;
+		pdf|"3")
+			run_make lettre
+			pause
+			manipulate_lettre
+			;;
+		epub|"4")
+			run_make lettre-epub
+			pause
+			manipulate_lettre
+			;;
+		readhtml|"5")
+			run_make readhtml
+			pause
+			manipulate_lettre
+			;;
+		read|"6")
+			read_pdf
+			pause
+			manipulate_lettre
+			;;
+		clean|"7")
+			run_make clean
+			manipulate_lettre
+			;;
+		another|"9")
+			choose_lettre
+			;;
+		previous|"0")
+			manipulate_ter
+			;;
+		*)
+			manipulate_lettre
+			;;
+	esac
 }
 
 
 ## SETUP
 
+# setup [doc|cyoa]: create the folder ${DOCUMENTFOLDER} from the samples, using
+# DOCUMENTTITLE, AUTHORNAME, DOCTAGS and DOCLANG
 setup(){
-mkdir -p ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}
+	kind=${1:-doc}
+	dest=${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}
+	t2t=${dest}/${DOCUMENTFOLDER}.t2t
+	makefile=${dest}/makefile
 
-cp $TEXTALLIONPATH/samples/makefile ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}
-cp $TEXTALLIONPATH/includes/sample.css ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.css
-cp $TEXTALLIONPATH/includes/sample.sty ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.sty
+	mkdir -p "$dest" || return 1
 
-cp $TEXTALLIONPATH/media/textallion_cover.svg ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.svg
+	# the CYOA targets (cyoa-html, cyoa-pdf...) are only in the CYOA makefile
+	if [ "$kind" = cyoa ]; then
+		cp "$TEXTALLIONPATH/samples_cyoa/makefile" "$makefile"
+	else
+		cp "$TEXTALLIONPATH/samples/makefile" "$makefile"
+	fi
+	cp "$TEXTALLIONPATH/includes/sample.css" "${dest}/${DOCUMENTFOLDER}.css"
+	if [ "$kind" = cyoa ]; then
+		cp "$TEXTALLIONPATH/includes/sample_cyoa.sty" "${dest}/${DOCUMENTFOLDER}.sty"
+	else
+		cp "$TEXTALLIONPATH/includes/sample.sty" "${dest}/${DOCUMENTFOLDER}.sty"
+	fi
 
-cp $TEXTALLIONPATH/media/sample_cover.png ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.png
+	cp "$TEXTALLIONPATH/media/textallion_cover.svg" "${dest}/${DOCUMENTFOLDER}.svg"
+	cp "$TEXTALLIONPATH/media/sample_cover.png" "${dest}/${DOCUMENTFOLDER}.png"
+	cp "$TEXTALLIONPATH/media/sample_cover.jpg" "${dest}/${DOCUMENTFOLDER}.jpg"
 
-cp $TEXTALLIONPATH/media/sample_cover.jpg ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.jpg
+	e_path=$(sed_escape "$TEXTALLIONPATH")
+	e_folder=$(sed_escape "$DOCUMENTFOLDER")
+	e_lang=$(sed_escape "$DOCLANG")
+	e_author=$(sed_escape "$AUTHORNAME")
+	e_title=$(sed_escape "$DOCUMENTTITLE")
+	e_tags=$(sed_escape "$DOCTAGS")
+	e_date=$(date +%Y-%m-%d)
 
+	sed_inplace "$makefile" \
+		-e "s@TEXTALLIONFOLDER = ../@TEXTALLIONFOLDER = ${e_path}/@g" \
+		-e "s@DOCUMENT = examples@DOCUMENT = ${e_folder}@g" \
+		-e "s@DOCUMENT = the_blue_death@DOCUMENT = ${e_folder}@g" \
+		-e "s@= ../contrib/dialog/@= ${e_path}/contrib/dialog/@g" \
+		-e "s@xx DOCUMENT LANGUAGE xx@${e_lang}@g" \
+		-e "s@xx DOCUMENT AUTHOR xx@${e_author}@g" \
+		-e "s@xx DOCUMENT TITLE xx@${e_title}@g" \
+		-e "s@xx DOCUMENT TAGS xx@${e_tags}@g" \
+		-e "s@xx DOCUMENT DATE xx@${e_date}@g"
 
-sed -i -e "s@TEXTALLIONFOLDER = ../@TEXTALLIONFOLDER = ${TEXTALLIONPATH}/@g" ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/makefile
-sed -i -e "s@DOCUMENT = examples@DOCUMENT = ${DOCUMENTFOLDER}@g" ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/makefile
-sed -i -e "s@xx DOCUMENT LANGUAGE xx@${DOCLANG}@g" ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/makefile
-sed -i -e "s@xx DOCUMENT AUTHOR xx@${AUTHORNAME}@g" ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/makefile
-sed -i -e "s@xx DOCUMENT TITLE xx@${DOCUMENTTITLE}@g" ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/makefile
-sed -i -e "s@xx DOCUMENT TAGS xx@${DOCTAGS}@g" ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/makefile
+	# replace info in cover
+	sed_inplace "${dest}/${DOCUMENTFOLDER}.svg" \
+		-e "s@Author@$(sed_escape "$(xml_escape "$AUTHORNAME")")@g" \
+		-e "s@Le Textallion@$(sed_escape "$(xml_escape "$DOCUMENTTITLE")")@g"
 
-sed -i -e "s@xx DOCUMENT DATE xx@`date +%Y-%m-%d`@g" ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/makefile
+	{
+		printf '%s\n' "$DOCUMENTTITLE"
+		printf '%s\n' "$AUTHORNAME"
+		printf '%s\n\n\n' "$(date +%Y-%m-%d)"
+		printf '%s\n\n' "%% DEF DOCUMENT METADATA. Use your own. Remplace the second part only, don't modify the xx DOCUMENT ## xx "
+		printf '%s\n\n' "%!postproc(tex): 'xx DOCUMENT TITLE xx' $(t2t_quote "$DOCUMENTTITLE")"
+		printf '%s\n\n' "%!postproc(tex): 'xx DOCUMENT AUTHOR xx' $(t2t_quote "$AUTHORNAME")"
+		printf '%s\n\n\n' "%!postproc(tex): 'xx DOCUMENT TAGS xx' $(t2t_quote "$DOCTAGS")"
+		printf '%s\n\n' "%!style(tex): ${DOCUMENTFOLDER}.sty"
+		printf '%s\n\n\n' "%!style(xhtml): ${DOCUMENTFOLDER}.css"
+		# (includeconf txt2cyoa.t2t is not needed: the CYOA makefile passes it with --config-file)
+		printf '%s\n\n' "%!includeconf: ${TEXTALLIONPATH}/core/textallion.t2t"
+		printf '%s\n\n\n' "%!postproc(tex): 'TEXTALLIONPATH' '${TEXTALLIONPATH}'"
+		if [ "$kind" = cyoa ]; then
+			printf '== 0 ==\n\n- Start the game: 1\n\n\n== 1 ==\n\n\n\n'
+		else
+			echo ""
+		fi
+	} > "$t2t"
 
-# replace info in cover
-sed -i -e "s@Author@${AUTHORNAME}@g"  ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.svg
-sed -i -e "s@Le Textallion@${DOCUMENTTITLE}@g"  ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.svg
-
-
-echo ${DOCUMENTTITLE} > ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-echo ${AUTHORNAME}   >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-printf "`date +%Y-%m-%d`\n\n\n"   >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-printf "%%%% DEF DOCUMENT METADATA. Use your own. Remplace the second part only, don't modify the xx DOCUMENT ## xx \n\n"   >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-printf "%%\041postproc(tex): 'xx DOCUMENT TITLE xx' '${DOCUMENTTITLE}'\n\n"   >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-printf "%%\041postproc(tex): 'xx DOCUMENT AUTHOR xx' '${AUTHORNAME}'\n\n"   >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-printf "%%\041postproc(tex): 'xx DOCUMENT TAGS xx' '${DOCTAGS}'\n\n\n"   >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-printf "%%\041style(tex): ${DOCUMENTFOLDER}.sty\n\n" >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-printf "%%\041style(xhtml): ${DOCUMENTFOLDER}.css\n\n\n" >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-printf "%%\041includeconf: ${TEXTALLIONPATH}/core/textallion.t2t\n\n" >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-printf ${CYOASTATUS} >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-printf "%%\041postproc(tex): 'TEXTALLIONPATH' '${TEXTALLIONPATH}'\n\n\n" >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-echo  ${CYOAINIT} >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-
-echo "${DOCUMENTFOLDER} was created into the textalliondocs folder in your home. You can modify it from here and generate the target documents with this menu driven command line. (You can also enter this folder, edit ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t with the text editor of your choice, and in order to generate the final documents, type \"make pdf\" or \"make html\" or \"make epub\"...)"
-pause
+	echo "${DOCUMENTFOLDER} was created into the textalliondocs folder in your home. You can modify it from here and generate the target documents with this menu driven command line. (You can also enter this folder, edit ${t2t} with the text editor of your choice, and in order to generate the final documents, type \"make pdf\" or \"make html\" or \"make epub\"...)"
+	pause
 }
 
 
 ## SETUPLETTRE
 
 setup_lettre(){
-mkdir -p ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}
+	dest=${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}
+	t2t=${dest}/${DOCUMENTFOLDER}.t2t
+	makefile=${dest}/makefile
 
-cp ${TEXTALLIONPATH}/samples/makefile ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}
-# cp ${TEXTALLIONPATH}/includes/sample.css ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.css
-# cp ${TEXTALLIONPATH}/includes/sample.sty ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.sty
+	mkdir -p "$dest" || return 1
 
-# cp ${TEXTALLIONPATH}/media/textallion_cover.svg ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.svg
+	cp "${TEXTALLIONPATH}/samples/makefile" "$makefile"
 
-# cp ${TEXTALLIONPATH}/media/sample_cover.png ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.png
+	e_path=$(sed_escape "$TEXTALLIONPATH")
+	e_folder=$(sed_escape "$DOCUMENTFOLDER")
+	e_lang=$(sed_escape "$DOCLANG")
+	e_author=$(sed_escape "$AUTHORNAME")
+	e_title=$(sed_escape "$DOCUMENTTITLE")
+	e_tags=$(sed_escape "$DOCTAGS")
+	e_date=$(date +%Y-%m-%d)
 
+	sed_inplace "$makefile" \
+		-e "s@TEXTALLIONFOLDER = ../@TEXTALLIONFOLDER = ${e_path}/@g" \
+		-e "s@DOCUMENT = examples@DOCUMENT = ${e_folder}@g" \
+		-e "s@xx DOCUMENT LANGUAGE xx@${e_lang}@g" \
+		-e "s@xx DOCUMENT AUTHOR xx@${e_author}@g" \
+		-e "s@xx DOCUMENT TITLE xx@${e_title}@g" \
+		-e "s@xx DOCUMENT TAGS xx@${e_tags}@g" \
+		-e "s@xx DOCUMENT DATE xx@${e_date}@g"
 
-sed -i -e "s@TEXTALLIONFOLDER = ../@TEXTALLIONFOLDER = ${TEXTALLIONPATH}/@g" ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/makefile
-sed -i -e "s@DOCUMENT = examples@DOCUMENT = ${DOCUMENTFOLDER}@g" ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/makefile
-sed -i -e "s@xx DOCUMENT LANGUAGE xx@${DOCLANG}@g" ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/makefile
-sed -i -e "s@xx DOCUMENT AUTHOR xx@${AUTHORNAME}@g" ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/makefile
-sed -i -e "s@xx DOCUMENT TITLE xx@${DOCUMENTTITLE}@g" ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/makefile
-sed -i -e "s@xx DOCUMENT TAGS xx@${DOCTAGS}@g" ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/makefile
+	signature=${TEXTALLIONDOCSPATH}/signature.txt
+	if [ -f "$signature" ]; then
+		echo "We use your default signature"
+	else
+		printf "\n\nYou don't have a default signature, so we create one in %s\n\n\n" "${TEXTALLIONDOCSPATH}"
+		cp "${TEXTALLIONPATH}/templates/signature.txt" "$signature"
+	fi
 
-sed -i -e "s@xx DOCUMENT DATE xx@`date +%Y-%m-%d`@g" ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/makefile
+	{
+		printf '%s\n' "$DOCUMENTTITLE"
+		printf '%s\n' "$AUTHORNAME"
+		printf '%s\n\n\n' "$(date +%Y-%m-%d)"
 
-# replace info in cover
-#sed -i -e "s@Author@${AUTHORNAME}@g"  ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.svg
-#sed -i -e "s@Le Textallion@${DOCUMENTTITLE}@g"  ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.svg
+		printf '%s\n\n' "%% DEF DOCUMENT METADATA. Use your own. Remplace the second part only, don't modify the xx DOCUMENT ## xx "
+		printf '%s\n\n\n' "%!postproc(tex): 'xx DOCUMENT TAGS xx' $(t2t_quote "$DOCTAGS")"
 
+		cat "$signature"
+		printf '\n\n'
 
-echo ${DOCUMENTTITLE} > ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-echo ${AUTHORNAME}   >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-printf "`date +%Y-%m-%d`\n\n\n"   >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
+		# sample sender / recipient data, to be replaced by the user
+		cat <<'EOF'
+%!postproc(tex): 'xx DOCUMENT RECIPIENT GENDER xx'          'Madame'
 
-#%!postproc(tex): 'xx DOCUMENT TAGS xx' 'lettre'
+%!postproc(tex): 'xx DOCUMENT RECIPIENT xx'                 '\textsc{Mélanie Farjot}'
+%!postproc(tex): 'xx DOCUMENT RECIPIENT STREET xx'          '1, rue Maréchal Livolas'
+%!postproc(tex): 'xx DOCUMENT RECIPIENT POSTAL CODE xx'     '77223'
+%!postproc(tex): 'xx DOCUMENT RECIPIENT TOWN xx'            'Villedaim'
 
-#%!postproc(tex): 'xx DOCUMENT AUTHOR CURRENT LOCATION xx'   'Rameville'
-#%!postproc(tex): 'xx DOCUMENT AUTHOR GENDER xx'             'M.'
-#%!postproc(tex): 'xx DOCUMENT AUTHOR xx'                    'Guillaume \\textsc{Grumbold}'
-#%!postproc(tex): 'xx DOCUMENT AUTHOR STREET xx'             '42, rue du Cerf'
-#%!postproc(tex): 'xx DOCUMENT AUTHOR POSTAL CODE xx'        '77444'
-#%!postproc(tex): 'xx DOCUMENT AUTHOR TOWN xx'               'Trifouilly en Brie'
-#%!postproc(tex): 'xx DOCUMENT AUTHOR PHONE xx'              '42 58 24 87 28'
-#%!postproc(tex): 'xx DOCUMENT AUTHOR FAX xx'                '42 58 24 87 29'
-#%!postproc(tex): 'xx DOCUMENT AUTHOR EMAIL xx'              'g.grumbold@biblio-rameville.net'
+%!postproc(tex): 'xx DOCUMENT RECIPIENT PHONE xx'           'Tél : 41 83 53 54 22'
+%!postproc(tex): 'xx DOCUMENT RECIPIENT FAX xx'             'Fax : 41 83 53 54 43'
 
+EOF
+		printf '%s\n\n' "%!postproc(tex): 'xx DOCUMENT TITLE xx' $(t2t_quote "$DOCUMENTTITLE")"
+		printf '%s\n\n' "%!postproc(tex): '%\\date{}' '\\date{le 9 mars 2012}'"
 
-#%!postproc(tex): 'xx DOCUMENT RECIPIENT GENDER xx'          'Madame'
-#%!postproc(tex): 'xx DOCUMENT RECIPIENT xx'                 '\\\textsc{Mélanie Farjot}'
-#%!postproc(tex): 'xx DOCUMENT RECIPIENT STREET xx'          '1, rue Maréchal Livolas'
-#%!postproc(tex): 'xx DOCUMENT RECIPIENT POSTAL CODE xx'     '77223'
-#%!postproc(tex): 'xx DOCUMENT RECIPIENT TOWN xx'            'Villedaim'
-#%!postproc(tex): 'xx DOCUMENT RECIPIENT PHONE xx'           'Tél : 41 83 53 54 22'
-#%!postproc(tex): 'xx DOCUMENT RECIPIENT FAX xx'             'Fax : 41 83 53 54 43'
+		printf '\n\n'
+		printf '%s\n\n' "%!style(tex): ${TEXTALLIONPATH}/includes/sample.sty"
+		printf '%s\n\n' "%!includeconf: ${TEXTALLIONPATH}/core/textallion.t2t"
+		echo ""
+		printf '%s\n\n\n' "%!postproc(tex): 'TEXTALLIONPATH' '${TEXTALLIONPATH}'"
+		echo ""
+	} > "$t2t"
 
-#%!postproc(tex): 'xx DOCUMENT TITLE xx'                     'Retour des livres'
-#%!postproc(tex): '%\\\date{}'                                '\\\date{le 9 mars 2012}'
-
-
-printf "%%%% DEF DOCUMENT METADATA. Use your own. Remplace the second part only, don't modify the xx DOCUMENT ## xx \n\n"   >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-
-printf "%%\041postproc(tex): 'xx DOCUMENT TAGS xx' '${DOCTAGS}'\n\n\n"   >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-
-if [ -f ${TEXTALLIONDOCSPATH}/signature.txt ]; then
-	echo "We use your default signature"
-	cat ${TEXTALLIONDOCSPATH}/signature.txt >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-else
-	printf "\n\nYou don't have a default signature, so we create one in \n" ${TEXTALLIONDOCSPATH}
-	printf "\n\n"
-	cp ${TEXTALLIONPATH}/templates/signature.txt ${TEXTALLIONDOCSPATH}/signature.txt
-	cat ${TEXTALLIONDOCSPATH}/signature.txt >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-fi
-
-printf "\n\n" >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-
-printf "%%\041postproc(tex): 'xx DOCUMENT RECIPIENT GENDER xx'          'Madame'\n\n"   >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-printf "%%\041postproc(tex): 'xx DOCUMENT RECIPIENT xx'                 '\\\textsc{Mélanie Farjot}'\n"   >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-printf "%%\041postproc(tex): 'xx DOCUMENT RECIPIENT STREET xx'          '1, rue Maréchal Livolas'\n"   >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-printf "%%\041postproc(tex): 'xx DOCUMENT RECIPIENT POSTAL CODE xx'     '77223'\n"   >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-printf "%%\041postproc(tex): 'xx DOCUMENT RECIPIENT TOWN xx'            'Villedaim'\n\n"   >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-printf "%%\041postproc(tex): 'xx DOCUMENT RECIPIENT PHONE xx'           'Tél : 41 83 53 54 22'\n"   >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-printf "%%\041postproc(tex): 'xx DOCUMENT RECIPIENT FAX xx'             'Fax : 41 83 53 54 43'\n\n"   >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-
-printf "%%\041postproc(tex): 'xx DOCUMENT TITLE xx' '${DOCUMENTTITLE}'\n\n"   >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-
-printf "%%\041postproc(tex): '%%\\\\date{}' '\\\\date{le 9 mars 2012}'\n\n"   >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-
-
-
-printf "%%\041style(tex): ${TEXTALLIONPATH}/includes/sample.sty\n\n" >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-# printf "%!style(xhtml): ${DOCUMENTFOLDER}.css\n\n\n" >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-printf "%%\041includeconf: ${TEXTALLIONPATH}/core/textallion.t2t\n\n" >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-echo ${CYOASTATUS} >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-printf "%%\041postproc(tex): 'TEXTALLIONPATH' '${TEXTALLIONPATH}'\n\n\n" >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-echo ${CYOAINIT} >> ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t
-
-echo "${DOCUMENTFOLDER} was created into the textalliondocs folder in your home. You can modify it from here and generate the target documents with this menu driven command line. (You can also enter this folder, edit ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.t2t with the text editor of your choice, and in order to generate the final documents, type \"make pdf\" or \"make html\" or \"make epub\"...)"
-pause
-}
-
-
-## TESTS
-
-test_folder(){
-if [ -e ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER} ]; then
-	echo "$THIS_FOLDER ~/${DOCUMENTFOLDER} $IS_ALREADY_PRESENT. Please choose another name or remove this folder, and run \"textallion\" again."
+	echo "${DOCUMENTFOLDER} was created into the textalliondocs folder in your home. You can modify it from here and generate the target documents with this menu driven command line. (You can also enter this folder, edit ${t2t} with the text editor of your choice, and in order to generate the final documents, type \"make pdf\" or \"make html\" or \"make epub\"...)"
 	pause
-	create_new_doc
-else
-	setup
-fi
-}
-
-
-test_cyoa_folder(){
-if [ -e ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER} ]; then
-	echo "This folder ~/${DOCUMENTFOLDER} is already present. Please choose another name or remove this folder, and run \"textallion\" again."
-	pause
-	create_new_cyoa
-else
-	setup
-	cp -fr ${TEXTALLIONPATH}/includes/sample_cyoa.sty ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.sty
-fi
-}
-
-test_lettre_folder(){
-if [ -e ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER} ]; then
-	echo "$THIS_FOLDER ~/${DOCUMENTFOLDER} is already present. Please choose another name or remove this folder, and run \"textallion\" again."
-	pause
-	create_new_lettre
-else
-	setup_lettre
-	#cp -fr ${TEXTALLIONPATH}/includes/sample_cyoa.sty ${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}/${DOCUMENTFOLDER}.sty
-fi
 }
 
 
@@ -1060,27 +1081,28 @@ choose_type_document(){
 	echo ""
 	echo "0: $PREVIOUS_MENU"
 	echo ""
-	read ACTION
-case $ACTION in
-				general | "1")
-					create_new_doc
-					;;
-				lettre|"2")
-					create_new_lettre
-					;;
-				cyoa|"3")
-					create_new_cyoa
-					;;
-				*|"0")
-					introduction
-					;;
-esac
+	ask ACTION
+	case $ACTION in
+		general | "1")
+			create_new_doc
+			;;
+		lettre|"2")
+			create_new_lettre
+			;;
+		cyoa|"3")
+			create_new_cyoa
+			;;
+		*|"0")
+			introduction
+			;;
+	esac
 }
 
 
 
 
 
+##### Converters
 
 ##### Converters
 
@@ -1091,7 +1113,7 @@ cyoa_dialog(){
     # for use with dialog
 	# https://linusakesson.net/dialog/docs/timeprogress.html#choicemode
 	# @DOLLAR@T expands as $T
-echo "(intro)	(activate node #start)\n(library links enabled)\n(label @DOLLAR@Target)\n        (current node @DOLLAR@Origin)\n        (label @DOLLAR@Origin to @DOLLAR@Target)" |\
+printf '%b\n' "(intro)	(activate node #start)\n(library links enabled)\n(label @DOLLAR@Target)\n        (current node @DOLLAR@Origin)\n        (label @DOLLAR@Origin to @DOLLAR@Target)" |\
 	perl -pe "s/\@DOL-LAR\@/'$'/g" > ${DOCUMENT}_export.dg 
 	# remove 3 first lines of the t2t doc (from line 1 to end line 3) 
 	cat ${DOCUMENT}.t2t  | sed '1,4d' | \
@@ -1211,7 +1233,7 @@ echo "(intro)	(activate node #start)\n(library links enabled)\n(label @DOLLAR@Ta
 	 # remove empty white spaces and lines\
 	 #sed -r '/^\s*$/d' |
 	perl -pe 's/#node0/#start/' >> ${DOCUMENT}_export.dg
-	sed -i -e "s/@DOLLAR@/$/g" ${DOCUMENT}_export.dg
+	sed_inplace ${DOCUMENT}_export.dg -e "s/@DOLLAR@/$/g"
 	make cyoa-dialog-z8
 	make cyoa-dialog-html
 	make cyoa-dialog-c64
@@ -1222,72 +1244,47 @@ echo "(intro)	(activate node #start)\n(library links enabled)\n(label @DOLLAR@Ta
 cyoa_ramus2(){
 	# https://notimetoplay.org/engines/ramus/
 	${TXT2TAGS} -T ${TEXTALLIONFOLDER}/templates/ramus2.html  --config-file ${TEXTALLIONFOLDER}/core/txt2cyoa.t2t  -t xhtml --no-css-inside --outfile ${DOCUMENT}_ramus2.html ${DOCUMENT}.t2t
-	sed -i -e "s/href=\"#/rel=\"/g" ${DOCUMENT}_ramus2.html
-	sed -i -e "s/style=\"display:none\"//g" ${DOCUMENT}_ramus2.html
+	sed_inplace ${DOCUMENT}_ramus2.html -e "s/href=\"#/rel=\"/g"
+	sed_inplace ${DOCUMENT}_ramus2.html -e "s/style=\"display:none\"//g"
 	#sed -i -e "s/onclick\(.*\)rel/rel/" ${DOCUMENT}_ramus2.html
-	sed -i -e "s/<p><br\/><br\/><br\/><\/p><\/div>/xxCLEARLINKSxx\n<\/div>/g" ${DOCUMENT}_ramus2.html
+	perl -pi -e 's{<p><br/><br/><br/></p></div>}{xxCLEARLINKSxx\n</div>}g' ${DOCUMENT}_ramus2.html
 	# remove the 1st occurence only 
-	sed -i -e "0,/\xxCLEARLINKSxx/s/\xxCLEARLINKSxx//" ${DOCUMENT}_ramus2.html
+	perl -0pi -e 's/xxCLEARLINKSxx//' ${DOCUMENT}_ramus2.html
 	# Create the do clear links
 	# If you don't like it this way, uncomment the next line first, to remove everything
 	#sed -i -e "s/rel=\"/rel=\"clear\" href=\"#/g" ${DOCUMENT}_ramus2.html
-	sed -i -e "s/rel=\"/href=\"#/g" ${DOCUMENT}_ramus2.html
+	sed_inplace ${DOCUMENT}_ramus2.html -e "s/rel=\"/href=\"#/g"
 	#sed -i -e "s/\xxCLEARLINKSxx/<\?do clear_all_links\(\)\; \?\>/g" ${DOCUMENT}_ramus2.html
-	sed -i -e "s/\xxCLEARLINKSxx//g" ${DOCUMENT}_ramus2.html
-	sed -i -e "s/xxRAMUS_INITxx/<div style=\"Display: none;\">\n<div id=\"start\">\n<li>Start: <b><a href=\"#page1\">1<\/a><\/b>/g" ${DOCUMENT}_ramus2.html
-	sed -i -e "s/THE END/THE END<br\/><a rel=\"clear\" href=\"#start\"><i>Start over?<\/i><\/a>/g" ${DOCUMENT}_ramus2.html
+	sed_inplace ${DOCUMENT}_ramus2.html -e "s/xxCLEARLINKSxx//g"
+	perl -pi -e 's{xxRAMUS_INITxx}{<div style="Display: none;">\n<div id="start">\n<li>Start: <b><a href="#page1">1</a></b>}g' ${DOCUMENT}_ramus2.html
+	sed_inplace ${DOCUMENT}_ramus2.html -e "s/THE END/THE END<br\/><a rel=\"clear\" href=\"#start\"><i>Start over?<\/i><\/a>/g"
 	cp ${DOCUMENT}_ramus2.html ${DOCUMENT}_ramus2b.html
-	sed -i -e "s/href=/rel=\"clear\" href=/g" ${DOCUMENT}_ramus2b.html
+	sed_inplace ${DOCUMENT}_ramus2b.html -e "s/href=/rel=\"clear\" href=/g"
 }	
-	
-old_start(){
-if [ $# -eq 0 ]
-then
-	test_OS
-	introduction
-else
-extension="${file##*.}"
-	case $extension in
-		*.epub)
-			echo "ok"
-			;;
-		*.t2t)
-			echo "in construction"
-			;;
-		*)
-			echo "extension inconnue ou non supportée"
-			;;
-	esac
-fi
-}
-
 
 # Start of script
 
-if [ ! -z `echo $1 ` ]; then
-	choice=$1
-elif [ -z "$1" ]; then
- #manipulate_doc
- 	usage
-fi	
-
-
-case $choice in
-	 init)
-	      test_OS
-		  introduction
-		  ;;
-	 list)
-	      ls ~/textalliondocs/
-		  ;;
-	$choice)
-          echo "Thank you for using TEXTALLION"
-		  echo "You document is ${DOCUMENT}"
-		  echo " "
-          $choice
-          ;;
-     *)
-          echo "Sorry, invalid input"
-          ;;
+case "${1:-}" in
+	"" | -h | --help | help)
+		usage
+		;;
+	init)
+		test_OS
+		introduction
+		;;
+	list)
+		ls "${TEXTALLIONDOCSPATH}/"
+		;;
+	cyoa_dialog | cyoa_ramus2)
+		# for use within a makefile: $DOCUMENT, $TXT2TAGS... come from the environment
+		test_OS
+		echo "Thank you for using TEXTALLION"
+		echo "You document is ${DOCUMENT}"
+		echo " "
+		"$1"
+		;;
+	*)
+		echo "Sorry, invalid input: $1" >&2
+		usage 1
+		;;
 esac
-

@@ -179,21 +179,18 @@ tidy:
 	-tidy -asxhtml --tidy-mark 1 --wrap 0 --clean 1 --output-xhtml 1 --input-encoding utf8 --doctype strict --new-inline-tags video,audio,canvas  $(DOCUMENT).html > $(DOCUMENT)2.html
 	cat $(DOCUMENT)2.html | sed -e "s/<meta name=\"generator\" content=\"http:\/\/txt2tags.org\" \/>//g" | sed -e "s/border=\"0\"//g" | sed -e "s/lang=\"fr\"//g" | sed -e "s/border=\"0\"//g" | sed -e "s/<\?xml version=\"1.0\" encoding=\"utf8\"\?>//g" | sed -e "s/name=\"toc[0-9]\"//g"> $(DOCUMENT).html
 
-# uses calibre
+# uses pandoc via core/epub-generator.sh
 
-	
+
 epub:
 	$(TXT2TAGS) -T $(TEXTALLIONFOLDER)/templates/epub.html -t xhtml --no-style --no-toc --outfile $(DOCUMENT).html $(DOCUMENT).t2t
 	cat $(DOCUMENT).html | sed -e "s/<audio\(.*\)audio>//g" > $(DOCUMENT)2.html
 	mv $(DOCUMENT)2.html $(DOCUMENT).html
-	-make tidy
+	# -make tidy
 	cat $(DOCUMENT).html | sed -e "s/&#10086;/*/g" | sed -e "s/&#10087;/*/g" | sed -e "s/&#10037;/*/g" | sed -e "s/&#9788;/*/g" | sed -e "s/&#9789;/*/g" | sed -e "s/&#9790;/*/g" | sed -e "s/&#9675;/*/g" | sed -e "s/html\#ftn/html/g" > $(DOCUMENT)2.html
 	mv $(DOCUMENT)2.html $(DOCUMENT).html
 	#
-	ebook-convert $(DOCUMENT).html $(DOCUMENT).epub --max-levels 0 --pretty-print --level1-toc //h:h1 --level2-toc //h:h2 --level3-toc //h:h3 --max-toc-links 0 --toc-threshold 3  --chapter-mark pagebreak  --cover $(DOCUMENT_COVER) --extra-css $(TEXTALLIONFOLDER)/includes/epub.css --no-default-epub-cover  --preserve-cover-aspect-ratio --no-chapters-in-toc --disable-font-rescaling
-	# --filter-css font-family
-	#
-	ebook-meta  $(DOCUMENT).epub --title "$(DOCUMENT_TITLE)" --authors "$(DOCUMENT_AUTHOR)" --tags "$(DOCUMENT_TAGS)" --language $(DOCUMENT_LANGUAGE) --book-producer 'textallion - https://textallion.sourceforge.io' --comments "$(DOCUMENT_INFO)" --cover $(DOCUMENT_COVER) 
+	sh $(TEXTALLIONFOLDER)/core/epub-generator.sh $(DOCUMENT).html $(DOCUMENT).epub --title "$(DOCUMENT_TITLE)" --authors "$(DOCUMENT_AUTHOR)" --tags "$(DOCUMENT_TAGS)" --language $(DOCUMENT_LANGUAGE) --cover $(DOCUMENT_COVER) --css $(TEXTALLIONFOLDER)/includes/epub.css --comments "$(DOCUMENT_INFO)" --producer "textallion - https://textallion.sourceforge.io"
 
 # split (not working well...)
 
