@@ -184,6 +184,7 @@ Un menu pour cela existe dans le script « textallion.sh », ou sinon vous pouve
  - **``make cyoa-html``** : génère le fichier HTML destiné à être publié sur internet  
  - **``make cyoa-pdf``** : génère le fichier PDF destiné à l'impression  
  - **``make cyoa-epub``** : génère le fichier {^}ePUB{^} destiné à être joué sur liseuse ou téléphone (android, iphone, ipad)
+ - ``make cyoa-typst`` : génère un document au format [Typst https://github.com/typst/typst] (``.typ``) ; ``make cyoa-typst-pdf`` enchaîne avec la compilation en pdf (nécessite l'outil ``typst`` en ligne de commande)
 
 
 

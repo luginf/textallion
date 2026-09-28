@@ -84,6 +84,10 @@ usage()
 	echo "       textallion list"
 	echo "         list the documents of ${TEXTALLIONDOCSPATH}"
 	echo ""
+	echo "       textallion migrate PROJECTNAME"
+	echo "         upgrade an old-style project makefile to the thin form"
+	echo "         (same as the \"Synchronize\" menu entry, without the menu)"
+	echo ""
 	echo "       textallion command"
 	echo "         for using within a makefile (cyoa_dialog, cyoa_ramus2)"
 	echo ""
@@ -217,6 +221,12 @@ t2t_quote(){
 			;;
 		*) printf "'%s'" "$1" ;;
 	esac
+}
+
+# escape a string for a makefile value: a literal "$" would otherwise start
+# a (probably undefined) make variable reference
+make_escape(){
+	printf '%s' "$1" | sed -e 's/\$/$$/g'
 }
 
 # print the folders of textalliondocs of one kind: doc, cyoa or lettre
@@ -451,7 +461,10 @@ manipulate_bis(){
 	echo "1: $GENERATE HTML, PDF $AND EPUB, $CREATE_INDEX"
 	echo "2: $READ HTML index $OF_DISTRIBUTED_VERSION_OF $DOCUMENTNAME"
 	echo ""
-	echo "3: Synchronize $DOCUMENTNAME makefile, LaTeX style and CSS style (need a diff tool, for Linux version)"
+	echo "3: Synchronize $DOCUMENTNAME (migrate an old-style makefile, or diff LaTeX/CSS style; needs a diff tool for the latter)"
+	echo ""
+	echo "4: $GENERATE Typst $FROM $DOCUMENTNAME"
+	echo "6: $GENERATE Typst PDF $FROM $DOCUMENTNAME (needs the typst CLI)"
 	echo ""
 	echo "5: $GENERATE a cover from the svg document (needs image-magick)"
 	echo ""
@@ -472,7 +485,17 @@ manipulate_bis(){
 			manipulate_bis
 			;;
 		synchronize|"3")
-			run_make configuration-update
+			synchronize_project
+			pause
+			manipulate_bis
+			;;
+		typst|"4")
+			run_make typst
+			pause
+			manipulate_bis
+			;;
+		typstpdf|"6")
+			run_make typst-pdf
 			pause
 			manipulate_bis
 			;;
@@ -764,7 +787,11 @@ manipulate_cyoa2(){
 	echo "7: $EXPORT_TO Choice-script format"
 	echo "8: $EXPORT_TO Inform 7 format"
 	echo ""
+	echo "10: $EXPORT_TO Typst"
+	echo "11: $EXPORT_TO Typst PDF (needs the typst CLI)"
+	echo ""
 	echo "9: Command-line interface to the game folder $DOCUMENTNAME (for using makefile for ex.). "
+	echo "12: Synchronize $DOCUMENTNAME (migrate an old-style makefile, or diff LaTeX/CSS style)"
 	echo ""
 	echo "0: $PREVIOUS_MENU"
 	echo ""
@@ -812,6 +839,21 @@ manipulate_cyoa2(){
 			;;
 		cmd|"9")
 			shell_in_folder
+			manipulate_cyoa2
+			;;
+		typst|"10")
+			run_make cyoa-typst
+			pause
+			manipulate_cyoa2
+			;;
+		typstpdf|"11")
+			run_make cyoa-typst-pdf
+			pause
+			manipulate_cyoa2
+			;;
+		synchronize|"12")
+			synchronize_project
+			pause
 			manipulate_cyoa2
 			;;
 		previous|"0")
@@ -865,6 +907,8 @@ manipulate_lettre(){
 	echo ""
 	echo "7: Clean folder (remove temporary files)"
 	echo ""
+	echo "8: Synchronize $DOCUMENTNAME (migrate an old-style makefile, or diff LaTeX style)"
+	echo ""
 	echo "9: $CHOOSE_ANOTHER_DOC"
 	echo ""
 	echo "0: $PREVIOUS_MENU"
@@ -904,6 +948,11 @@ manipulate_lettre(){
 			run_make clean
 			manipulate_lettre
 			;;
+		synchronize|"8")
+			synchronize_project
+			pause
+			manipulate_lettre
+			;;
 		another|"9")
 			choose_lettre
 			;;
@@ -919,22 +968,68 @@ manipulate_lettre(){
 
 ## SETUP
 
+# write_makefile [doc|cyoa]: write a thin makefile for ${DOCUMENTFOLDER},
+# using DOCUMENTTITLE, AUTHORNAME, DOCTAGS and DOCLANG. It only holds the
+# project's data: the targets (html, pdf, cyoa-html...) come from
+# core/textallion-common.mk (and core/textallion-cyoa.mk for "cyoa"), always
+# included fresh from $TEXTALLIONPATH, so a Textallion update reaches every
+# project without touching its makefile.
+write_makefile(){
+	kind=${1:-doc}
+	dest=${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}
+	makefile=${dest}/makefile
+
+	{
+		printf '%s\n' "# Makefile for Textallion"
+		printf '%s\n\n' "# Makefile initially generated on $(date +%Y-%m-%d)"
+		printf '%s\n' "# Override on the command line or in the environment to use another copy"
+		printf '%s\n' "# of Textallion, e.g. \"make TEXTALLIONFOLDER=~/src/textallion html\""
+		printf '%s\n\n' "export TEXTALLIONFOLDER ?= ${TEXTALLIONPATH}"
+		printf '%s\n' "ifdef TEXTALLIONDOC"
+		printf '%s\n' "  export DOCUMENT = \$(TEXTALLIONDOC)"
+		printf '%s\n' "else"
+		printf '  export DOCUMENT = %s\n' "$DOCUMENTFOLDER"
+		printf '%s\n\n' "endif"
+		printf 'DOCUMENT_TITLE = %s\n' "$(make_escape "$DOCUMENTTITLE")"
+		printf 'DOCUMENT_AUTHOR = %s\n' "$(make_escape "$AUTHORNAME")"
+		printf 'DOCUMENT_TAGS = %s\n' "$(make_escape "$DOCTAGS")"
+		printf '%s\n' "DOCUMENT_IFID ="
+		printf '%s\n\n' "DOCUMENT_INFO = textallion - https://textallion.sourceforge.io"
+		printf '%s\n' "ifdef DOCLANG"
+		printf '%s\n' "  DOCUMENT_LANGUAGE = \$(DOCLANG)"
+		printf '%s\n' "else"
+		printf '  DOCUMENT_LANGUAGE = %s\n' "$(make_escape "$DOCLANG")"
+		printf '%s\n\n' "endif"
+		printf '%s\n' "DOCUMENT_COVER = \$(DOCUMENT).jpg"
+		if [ "$kind" = cyoa ]; then
+			printf '\n%s\n' "# for the \"dialog\" export (cyoa-dialog): https://linusakesson.net/dialog/"
+			printf '%s\n' "DIALOGC = \$(TEXTALLIONFOLDER)/contrib/dialog/dialogc"
+			printf '%s\n' "AAMBUNDLE = \$(TEXTALLIONFOLDER)/contrib/dialog/aambundle"
+			printf '%s\n' "DIALOGLIB = \$(TEXTALLIONFOLDER)/contrib/dialog/stdlib"
+		fi
+		printf '\n%s\n' "# Tool choices (PDFREADER, EDITTOOL, DIFFTOOL...) default from"
+		printf '%s\n' "# core/textallion-defaults.mk, and can be set once for every project in"
+		printf '%s\n' "# ~/.config/textallion/config.mk. To override just this project, set them"
+		printf '%s\n\n' "# above this line."
+		printf '%s\n' "include \$(TEXTALLIONFOLDER)/core/textallion-common.mk"
+		if [ "$kind" = cyoa ]; then
+			printf '%s\n' "include \$(TEXTALLIONFOLDER)/core/textallion-cyoa.mk"
+		fi
+		printf '\n%s\n' "# project-specific target overrides, if any (not created by default)"
+		printf '%s\n' "-include local.mk"
+	} > "$makefile"
+}
+
 # setup [doc|cyoa]: create the folder ${DOCUMENTFOLDER} from the samples, using
 # DOCUMENTTITLE, AUTHORNAME, DOCTAGS and DOCLANG
 setup(){
 	kind=${1:-doc}
 	dest=${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}
 	t2t=${dest}/${DOCUMENTFOLDER}.t2t
-	makefile=${dest}/makefile
 
 	mkdir -p "$dest" || return 1
 
-	# the CYOA targets (cyoa-html, cyoa-pdf...) are only in the CYOA makefile
-	if [ "$kind" = cyoa ]; then
-		cp "$TEXTALLIONPATH/samples_cyoa/makefile" "$makefile"
-	else
-		cp "$TEXTALLIONPATH/samples/makefile" "$makefile"
-	fi
+	write_makefile "$kind"
 	cp "$TEXTALLIONPATH/includes/sample.css" "${dest}/${DOCUMENTFOLDER}.css"
 	if [ "$kind" = cyoa ]; then
 		cp "$TEXTALLIONPATH/includes/sample_cyoa.sty" "${dest}/${DOCUMENTFOLDER}.sty"
@@ -945,25 +1040,6 @@ setup(){
 	cp "$TEXTALLIONPATH/media/textallion_cover.svg" "${dest}/${DOCUMENTFOLDER}.svg"
 	cp "$TEXTALLIONPATH/media/sample_cover.png" "${dest}/${DOCUMENTFOLDER}.png"
 	cp "$TEXTALLIONPATH/media/sample_cover.jpg" "${dest}/${DOCUMENTFOLDER}.jpg"
-
-	e_path=$(sed_escape "$TEXTALLIONPATH")
-	e_folder=$(sed_escape "$DOCUMENTFOLDER")
-	e_lang=$(sed_escape "$DOCLANG")
-	e_author=$(sed_escape "$AUTHORNAME")
-	e_title=$(sed_escape "$DOCUMENTTITLE")
-	e_tags=$(sed_escape "$DOCTAGS")
-	e_date=$(date +%Y-%m-%d)
-
-	sed_inplace "$makefile" \
-		-e "s@TEXTALLIONFOLDER = ../@TEXTALLIONFOLDER = ${e_path}/@g" \
-		-e "s@DOCUMENT = examples@DOCUMENT = ${e_folder}@g" \
-		-e "s@DOCUMENT = the_blue_death@DOCUMENT = ${e_folder}@g" \
-		-e "s@= ../contrib/dialog/@= ${e_path}/contrib/dialog/@g" \
-		-e "s@xx DOCUMENT LANGUAGE xx@${e_lang}@g" \
-		-e "s@xx DOCUMENT AUTHOR xx@${e_author}@g" \
-		-e "s@xx DOCUMENT TITLE xx@${e_title}@g" \
-		-e "s@xx DOCUMENT TAGS xx@${e_tags}@g" \
-		-e "s@xx DOCUMENT DATE xx@${e_date}@g"
 
 	# replace info in cover
 	sed_inplace "${dest}/${DOCUMENTFOLDER}.svg" \
@@ -1000,28 +1076,10 @@ setup(){
 setup_lettre(){
 	dest=${TEXTALLIONDOCSPATH}/${DOCUMENTFOLDER}
 	t2t=${dest}/${DOCUMENTFOLDER}.t2t
-	makefile=${dest}/makefile
 
 	mkdir -p "$dest" || return 1
 
-	cp "${TEXTALLIONPATH}/samples/makefile" "$makefile"
-
-	e_path=$(sed_escape "$TEXTALLIONPATH")
-	e_folder=$(sed_escape "$DOCUMENTFOLDER")
-	e_lang=$(sed_escape "$DOCLANG")
-	e_author=$(sed_escape "$AUTHORNAME")
-	e_title=$(sed_escape "$DOCUMENTTITLE")
-	e_tags=$(sed_escape "$DOCTAGS")
-	e_date=$(date +%Y-%m-%d)
-
-	sed_inplace "$makefile" \
-		-e "s@TEXTALLIONFOLDER = ../@TEXTALLIONFOLDER = ${e_path}/@g" \
-		-e "s@DOCUMENT = examples@DOCUMENT = ${e_folder}@g" \
-		-e "s@xx DOCUMENT LANGUAGE xx@${e_lang}@g" \
-		-e "s@xx DOCUMENT AUTHOR xx@${e_author}@g" \
-		-e "s@xx DOCUMENT TITLE xx@${e_title}@g" \
-		-e "s@xx DOCUMENT TAGS xx@${e_tags}@g" \
-		-e "s@xx DOCUMENT DATE xx@${e_date}@g"
+	write_makefile doc
 
 	signature=${TEXTALLIONDOCSPATH}/signature.txt
 	if [ -f "$signature" ]; then
@@ -1046,7 +1104,7 @@ setup_lettre(){
 		cat <<'EOF'
 %!postproc(tex): 'xx DOCUMENT RECIPIENT GENDER xx'          'Madame'
 
-%!postproc(tex): 'xx DOCUMENT RECIPIENT xx'                 '\textsc{Mélanie Farjot}'
+%!postproc(tex): 'xx DOCUMENT RECIPIENT xx'                 '\\textsc{Mélanie Farjot}'
 %!postproc(tex): 'xx DOCUMENT RECIPIENT STREET xx'          '1, rue Maréchal Livolas'
 %!postproc(tex): 'xx DOCUMENT RECIPIENT POSTAL CODE xx'     '77223'
 %!postproc(tex): 'xx DOCUMENT RECIPIENT TOWN xx'            'Villedaim'
@@ -1056,7 +1114,10 @@ setup_lettre(){
 
 EOF
 		printf '%s\n\n' "%!postproc(tex): 'xx DOCUMENT TITLE xx' $(t2t_quote "$DOCUMENTTITLE")"
-		printf '%s\n\n' "%!postproc(tex): '%\\date{}' '\\date{le 9 mars 2012}'"
+		# the pattern needs "\\" for a literal backslash and "\{" "\}" for
+		# literal braces: as a regex (unlike the replacement), a bare "\d"
+		# would mean "one digit", not "a backslash followed by d"
+		printf '%s\n\n' "%!postproc(tex): '%\\\\date\\{\\}' '\\date{le 9 mars 2012}'"
 
 		printf '\n\n'
 		printf '%s\n\n' "%!style(tex): ${TEXTALLIONPATH}/includes/sample.sty"
@@ -1068,6 +1129,63 @@ EOF
 
 	echo "${DOCUMENTFOLDER} was created into the textalliondocs folder in your home. You can modify it from here and generate the target documents with this menu driven command line. (You can also enter this folder, edit ${t2t} with the text editor of your choice, and in order to generate the final documents, type \"make pdf\" or \"make html\" or \"make epub\"...)"
 	pause
+}
+
+
+## MIGRATE (old-style project makefile -> thin makefile + include)
+
+# a thin makefile includes core/textallion-common.mk; an old-style one has
+# its own copy of every target instead
+is_thin_makefile(){
+	grep -q 'textallion-common\.mk' "${TEXTALLIONDOCSPATH}/${DOCUMENTNAME}/makefile" 2>/dev/null
+}
+
+# migrate_makefile: rewrite DOCUMENTNAME's old-style makefile (one full copy
+# of every target per project, from before the thin-makefile rework) into a
+# thin one. The previous file is kept as makefile.bak. A custom rule added to
+# the old makefile is not carried over: it has to be moved to local.mk by
+# hand, next to the new makefile.
+migrate_makefile(){
+	dest=${TEXTALLIONDOCSPATH}/${DOCUMENTNAME}
+	old=${dest}/makefile
+
+	if [ ! -f "$old" ]; then
+		echo "No makefile found in ${dest}."
+		return 1
+	fi
+	if is_thin_makefile; then
+		echo "${DOCUMENTNAME}'s makefile is already thin (it includes core/textallion-common.mk): nothing to migrate."
+		return 0
+	fi
+
+	if grep -q '^cyoa-html:' "$old"; then kind=cyoa; else kind=doc; fi
+
+	DOCUMENTFOLDER=$DOCUMENTNAME
+	DOCUMENTTITLE=$(sed -n 's/^DOCUMENT_TITLE = //p' "$old" | sed -e 's/[[:space:]]*$//' -e '1!d')
+	AUTHORNAME=$(sed -n 's/^DOCUMENT_AUTHOR = //p' "$old" | sed -e 's/[[:space:]]*$//' -e '1!d')
+	DOCTAGS=$(sed -n 's/^DOCUMENT_TAGS = //p' "$old" | sed -e 's/[[:space:]]*$//' -e '1!d')
+	DOCLANG=$(sed -n 's/^  DOCUMENT_LANGUAGE = //p' "$old" | grep -v '\$(DOCLANG)' | sed -e 's/[[:space:]]*$//' -e '1!d')
+	[ -n "$DOCLANG" ] || DOCLANG=en
+
+	cp "$old" "${old}.bak"
+	write_makefile "$kind"
+
+	echo "${DOCUMENTNAME}'s makefile was rewritten as a thin one (it now includes core/textallion-common.mk$( [ "$kind" = cyoa ] && printf ' and core/textallion-cyoa.mk')). The previous makefile was kept as makefile.bak: if you had added a custom rule to it, move it to local.mk (next to the new makefile) by hand."
+	if [ -z "$DOCUMENTTITLE" ] && [ -z "$AUTHORNAME" ]; then
+		echo "(DOCUMENT_TITLE and DOCUMENT_AUTHOR could not be read from the old makefile: please check the new one.)"
+	fi
+}
+
+# synchronize_project: bring DOCUMENTNAME up to date. An old-style makefile
+# is migrated to the thin form; a thin one has nothing to update by itself
+# (it always includes the current core/textallion-common.mk), so this only
+# offers to diff the .sty and .css, which are still copied per-project.
+synchronize_project(){
+	if is_thin_makefile; then
+		run_make configuration-update
+	else
+		migrate_makefile
+	fi
 }
 
 
@@ -1274,6 +1392,11 @@ case "${1:-}" in
 		;;
 	list)
 		ls "${TEXTALLIONDOCSPATH}/"
+		;;
+	migrate)
+		test_OS
+		DOCUMENTNAME=${2:?"usage: textallion migrate PROJECTNAME"}
+		migrate_makefile
 		;;
 	cyoa_dialog | cyoa_ramus2)
 		# for use within a makefile: $DOCUMENT, $TXT2TAGS... come from the environment

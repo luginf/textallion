@@ -8796,7 +8796,13 @@ def finish_him(outlist, config):
                 try:
                     line = rgx.sub(repl, line)
                 except re.error:
-                    Error("%s: '%s'" % (errmsg, repl))
+                    # repl has a backslash re.sub() cannot make sense of
+                    # (e.g. a literal '\date{...}'): retry once, with any
+                    # such backslash neutralized so it is kept literally
+                    try:
+                        line = rgx.sub(neutralize_repl_backslashes(repl), line)
+                    except re.error:
+                        Error("%s: '%s'" % (errmsg, repl))
             postoutlist.append(line)
         outlist = postoutlist[:]
 
@@ -9430,6 +9436,45 @@ def expandLineBreaks(mylist):
     for line in mylist:
         ret.extend(line.split("\n"))
     return ret
+
+
+def neutralize_repl_backslashes(repl):
+    """
+    A %!preproc / %!postproc replacement string is plain text chosen by the
+    document author, not a Python re.sub() template, but it is passed to
+    re.sub() as one. re.sub() reads a backslash in it as the start of an
+    escape sequence: \\1.. \\99 and \\g<name> are backreferences, a
+    documented, used feature of %!postproc (e.g. to reorder captured
+    groups); some replacements also rely on \\n expanding to a real
+    newline. But an escape re.sub() does not know, such as \\d or \\p, is a
+    hard error ("bad escape") that aborts the whole conversion - which is
+    what happens to a LaTeX command such as '\\date{...}' in the
+    replacement text.
+
+    This is the fallback used to recover from that error (see its call
+    site below): it doubles every backslash that is not part of a real
+    backreference, \\n/\\t/... or an already-escaped, literal "\\\\", so
+    re.sub() treats it as a literal character instead of an escape. It is
+    only applied when the replacement, used as-is, made re.sub() raise -
+    a working replacement (including one that relies on \\n for a real
+    newline) is never rewritten.
+    """
+    out = []
+    i, n = 0, len(repl)
+    backref = re.compile(r"\\([0-9]{1,2}|g<[^>]*>|[\\ntrfva0])")
+    while i < n:
+        if repl[i] == "\\":
+            m = backref.match(repl, i)
+            if m:
+                out.append(m.group(0))
+                i = m.end()
+                continue
+            out.append("\\\\")
+            i += 1
+            continue
+        out.append(repl[i])
+        i += 1
+    return "".join(out)
 
 
 def compile_filters(filters, errmsg="Filter"):
@@ -10317,7 +10362,11 @@ def convert(bodylines, config, firstlinenr=1):
                 try:
                     line = rgx.sub(repl, line)
                 except re.error:
-                    Error("%s: '%s'" % (errmsg, repl))
+                    # see the same fallback in finish_him(), for %!postproc
+                    try:
+                        line = rgx.sub(neutralize_repl_backslashes(repl), line)
+                    except re.error:
+                        Error("%s: '%s'" % (errmsg, repl))
 
         line = maskEscapeChar(line)  # protect \ char
         linenr += 1

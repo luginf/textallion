@@ -152,6 +152,7 @@ note: in the case cyoa-graph is not working on windows, you can render the gener
  - **``make cyoa-html``** : create HTML file to publish the game on internet 
  - **``make cyoa-pdf``** : create the PDF file for printing the gamebook
  - **``make cyoa-epub``** : create the {^}ePUB{^} file to be displayed in a ebook reader or on a phone (android, iphone, ipad)
+ - ``make cyoa-typst`` : create a [Typst https://github.com/typst/typst] document (``.typ``); ``make cyoa-typst-pdf`` also compiles it to pdf (needs the ``typst`` command-line tool as well)
  - ``make cyoa-play`` : start the default browser and play the HTML file
  
 

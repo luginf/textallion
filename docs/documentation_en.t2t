@@ -205,10 +205,11 @@ On Linux, you can use the textallion.sh script to process your document; modify 
 - **``make pdf``** to generate a LaTeX document and then a pdf file. If the compilation goes well, you won't see any errors, and the output will end with "entering extended mode".
 - ``make pdfsmall`` for making a document with 2 pages in one using pdfjam - linking is disabled in the output,  good for hard copy printing only.
 - ``make booklet`` for making a recto-verso leaflet via psutils, links will also be disabled and the column alignment seems to need some adjustment.
+- ``make typst`` to generate a [Typst https://github.com/typst/typst] document (``.typ``), via [pandoc https://pandoc.org/]; ``make typst-pdf`` also compiles it to pdf (needs the ``typst`` command-line tool as well).
 - **``make epub``** to create an {^}ePUB{^} format e-book file from the html file, using the free program [calibre http://calibre.kovidgoyal.net/]. You can also use [Sigil http://sigil-ebook.com/] for reformatting your {^}ePUB{^} document.
 - ``make clean`` to clean the folder of temporary files.
 - ``make cleanall`` to clean the folder of temporary files, and erase all the generated .tex and .pdf files; prompts for confirmation first.
- - ``make configuration-update`` when updating your textallion package. This uses a diff tool such as meld, to compare the configuration files of your project (makefile, css & sty) with the updated source files and help you update them if necessary.
+ - ``make configuration-update`` when updating your textallion package. This uses a diff tool such as meld to compare your project's css and sty files with the current default ones, so you can update them while keeping your own settings. Since 2026-09 the makefile itself does not need this any more: it only holds your project's data and includes its targets (``core/textallion-common.mk``, plus ``core/textallion-cyoa.mk`` for a CYOA game) straight from the textallion installation, so it is always current. An old-style makefile (a full copy of every target, from before 2026-09) is upgraded to this form with ``textallion migrate PROJECTNAME``, or the "Synchronize" menu entry of ``textallion init`` (which picks migration or a plain css/sty diff automatically, depending on the makefile).
  - ``make website`` to create a "master index" page for making your html, pdf and {^}ePUB{^} files output files available on line, including generating a qr-code for scanning the URL into a phone.
 - ``make all`` for making html and pdf, and cleaning temporary files.
 
